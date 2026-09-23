@@ -1,0 +1,19 @@
+__pycache__/
+*.pyc
+.venv/
+venv/
+*.egg-info/
+
+# gerçek saha verisi -- test için yerelde tutulur, repoya girmez
+tests/fixtures/*.dxf
+tests/fixtures/*.ncn
+
+# büyük imar planı altlığı dosyaları hiçbir zaman commit edilmemeli
+data/background/
+*.DXF
+!data/templates/*.dxf
+
+.env
+
+# İcmal kayıtları -- çalışma zamanı verisi, kaynak kod değil
+instance/

@@ -1,0 +1,54 @@
+{% extends "base.html" %}
+{% block content %}
+  <h1>Tespit edilen işler</h1>
+  <p class="sub">Hakediş <strong>{{ hakedis_no }}</strong> · Dosyada {{ groups|length }} ayrı iş kümesi bulundu (yakınlıklarına göre gruplandı). Hangisi bu ataşmana aitse onun altındaki formu doldurup üretin.</p>
+
+  {% for group in groups %}
+  <div class="group {% if loop.first %}top{% endif %}">
+    <h3>Küme {{ loop.index }}
+      {% if loop.first %}<span class="badge">en büyük</span>{% endif %}
+      {% if not group.suggested_scale %}<span class="badge warn">hiçbir şablona sığmıyor</span>{% endif %}
+    </h3>
+    <p class="meta">
+      {{ group.piece_count }} parke parçası, {{ group.bordur_count }} bordür/oluk kenarı,
+      toplam {{ group.total_area }} m²
+      {% if group.suggested_mahalle %} · mahalle: <strong>{{ group.suggested_mahalle }}</strong>{% endif %}
+      {% if group.suggested_street %} · en yakın cadde/sokak: <strong>{{ group.suggested_street }}</strong> (~{{ group.street_dist_m }} m){% endif %}
+      {% if group.suggested_kapi_no %} · en yakın kapı no: <strong>{{ group.suggested_kapi_no }}</strong> (~{{ group.kapi_no_dist_m }} m){% endif %}
+      {% if group.suggested_scale %} · önerilen şablon: 1/{{ group.suggested_scale }}{% endif %}
+    </p>
+
+    <form action="{{ url_for('generate') }}" method="post">
+      <input type="hidden" name="session_id" value="{{ session_id }}">
+      <input type="hidden" name="group_idx" value="{{ loop.index0 }}">
+      <input type="hidden" name="template_scale" value="{{ group.suggested_scale or '' }}">
+
+      <label>Mahalle</label>
+      <input type="text" name="mahalle" value="{{ group.suggested_mahalle or '' }}" required>
+
+      <label>Cadde/Sokak</label>
+      <input type="text" name="cadde_sokak" value="{{ group.suggested_street or '' }}" required>
+
+      <label>Kapı No (imalatın önünde durduğu bina no)</label>
+      <input type="text" name="kapi_no" value="{{ group.suggested_kapi_no or '' }}">
+      <p class="hint">İmar planındaki en yakın bina numarasından otomatik önerildi, gerekirse düzeltin.</p>
+
+      <input type="hidden" name="hakedis_no" value="{{ hakedis_no }}">
+      <label>Sıra No</label>
+      <input type="text" name="sira_no" required>
+
+      <label>İmalatın bitiş tarihi (gg/aa/yyyy)</label>
+      <input type="text" name="imalat_bitis_tarihi" placeholder="28/07/2026" required>
+
+      <label>Aykome No (opsiyonel)</label>
+      <input type="text" name="aykome_no">
+
+      <div style="margin-top:16px">
+        <button type="submit" {% if not group.suggested_scale %}disabled{% endif %}>Bu küme için ataşman DXF'i üret</button>
+      </div>
+    </form>
+  </div>
+  {% endfor %}
+
+  <p class="sub"><a href="{{ url_for('index') }}">&larr; Yeniden dosya yükle</a></p>
+{% endblock %}

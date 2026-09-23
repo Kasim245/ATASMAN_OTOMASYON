@@ -1,0 +1,82 @@
+{% extends "base.html" %}
+{% block content %}
+  <h1>İcmal (hakediş özeti)</h1>
+  <p class="sub">Her "ataşman DXF'i üret" işleminde o ataşmanın verileri burada otomatik birikir.
+    Hakediş bittiğinde, o hakediş numarasını seçip İcmal Excel'ini indirebilirsiniz.</p>
+
+  <div class="panel">
+    <form method="get" style="display:flex; gap:10px; align-items:flex-end;">
+      <div style="flex:1">
+        <label>Hakediş No</label>
+        <input type="text" name="hakedis_no" value="{{ hakedis_no }}" list="hakedis-list"
+               placeholder="örn. 4" required>
+        <datalist id="hakedis-list">
+          {% for h in hakedis_list %}<option value="{{ h }}">{% endfor %}
+        </datalist>
+      </div>
+      <button type="submit">Göster</button>
+    </form>
+    {% if hakedis_list %}
+      <p class="hint">Kayıtlı hakedişler: {{ hakedis_list|join(', ') }}</p>
+    {% else %}
+      <p class="hint">Henüz hiç ataşman üretilmedi, kayıt yok.</p>
+    {% endif %}
+  </div>
+
+  {% if hakedis_no %}
+  <div class="panel">
+    <h3>{{ hakedis_no }} Nolu Hakediş &mdash; {{ records|length }} ataşman</h3>
+    {% if records %}
+    <table>
+      <tr>
+        <th>Kroki No</th><th>Mahalle</th><th>Cadde/Sokak</th><th>No</th>
+        <th>T4</th><th>T5</th><th>T6</th><th>T7</th><th>T8</th><th></th>
+      </tr>
+      {% for r in records %}
+      <tr>
+        <td>{{ r.hakedis_no }}/{{ r.sira_no }}</td>
+        <td>{{ r.mahalle }}</td>
+        <td>{{ r.cadde_sokak }}</td>
+        <td>{{ r.kapi_no }}</td>
+        <td>{{ '%.2f'|format(r.t4) if r.t4 else '' }}</td>
+        <td>{{ '%.2f'|format(r.t5) if r.t5 else '' }}</td>
+        <td>{{ '%.2f'|format(r.t6) if r.t6 else '' }}</td>
+        <td>{{ '%.2f'|format(r.t7) if r.t7 else '' }}</td>
+        <td>{{ '%.2f'|format(r.t8) if r.t8 else '' }}</td>
+        <td>
+          <form method="post" action="{{ url_for('icmal_sil') }}"
+                onsubmit="return confirm('Bu ataşman kaydı silinsin mi? (üretilmiş DXF dosyasını etkilemez)');">
+            <input type="hidden" name="record_id" value="{{ r.id }}">
+            <input type="hidden" name="hakedis_no" value="{{ hakedis_no }}">
+            <button type="submit" style="background:#b3453a; padding:4px 10px; font-size:.82rem;">sil</button>
+          </form>
+        </td>
+      </tr>
+      {% endfor %}
+    </table>
+    <div style="margin-top:16px">
+      <a class="btn" href="{{ url_for('icmal_indir', hakedis_no=hakedis_no) }}">İcmal Excel'ini indir</a>
+    </div>
+    {% else %}
+      <p class="hint">Bu hakediş numarasına ait kayıt yok.</p>
+    {% endif %}
+  </div>
+  {% endif %}
+
+  <div class="panel">
+    <h3>Birim fiyatlar (TL)</h3>
+    <p class="hint">Sözleşme süresince sabit kabul edilir; burada bir kere ayarlayın, her İcmal'de kullanılır.</p>
+    <form method="post" action="{{ url_for('icmal_birim_fiyat') }}">
+      <input type="hidden" name="hakedis_no" value="{{ hakedis_no }}">
+      <div style="display:grid; grid-template-columns: repeat(4, 1fr); gap:10px;">
+        {% for k in t_keys %}
+        <div>
+          <label>{{ k }}</label>
+          <input type="text" name="fiyat_{{ k }}" value="{{ unit_prices[k] }}">
+        </div>
+        {% endfor %}
+      </div>
+      <div style="margin-top:14px"><button type="submit">Fiyatları kaydet</button></div>
+    </form>
+  </div>
+{% endblock %}

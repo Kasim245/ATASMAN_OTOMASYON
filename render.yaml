@@ -1,0 +1,25 @@
+# Render "Blueprint" -- Render'da "New +" > "Blueprint" seçilip bu repo
+# gösterildiğinde, aşağıdaki her şeyi (web servisi + kalıcı disk + gizli
+# anahtar) otomatik olarak tek seferde kurar. Elle tek tek alan doldurmaya
+# gerek kalmaz. Ayrıntılar için README'nin "Yayına alma (Render)" bölümüne
+# bakın.
+services:
+  - type: web
+    name: atasman-otomasyon
+    env: python
+    plan: starter
+    buildCommand: "pip install -r requirements.txt"
+    startCommand: "gunicorn wsgi:app"
+    envVars:
+      # rastgele, güvenli bir değerle Render kendisi oluşturur -- elle
+      # girmeye gerek yok
+      - key: SECRET_KEY
+        generateValue: true
+      # aşağıdaki disk'in mount edildiği yer; db.py bu yola SQLite dosyasını
+      # yazar (bkz. app/core/config.py::DB_PATH)
+      - key: DATA_DISK_PATH
+        value: /data
+    disk:
+      name: atasman-data
+      mountPath: /data
+      sizeGB: 1

@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% block content %}
+  <h1>Ataşman DXF Üretimi</h1>
+  <p class="sub">Nokta dosyanızı ve saha DXF'inizi yükleyin; sistem hangi işlerin (sokakların) bu dosyada olduğunu bulup size gösterecek.</p>
+
+  <div class="panel">
+    <form action="{{ url_for('analyze') }}" method="post" enctype="multipart/form-data">
+      <label for="hakedis_no">Hangi hakediştesiniz?</label>
+      <input type="text" id="hakedis_no" name="hakedis_no" value="{{ current_hakedis_no or '' }}" required>
+      <p class="hint">Bundan sonra yüklediğiniz her şey bu hakedişe göre hazırlanır -- mahallelerin malzeme kalemi
+        sayaçları (YP1, YP2...) da bu hakediş numarasına özeldir. Bir sonraki hakedişe geçtiğinizde burayı
+        değiştirin, sayaçlar o mahallede sıfırdan başlar.</p>
+
+      <label for="ncn">Nokta dosyası (.ncn)</label>
+      <input type="file" id="ncn" name="ncn" accept=".ncn,.txt" required>
+      <p class="hint">Stonex/Singular'dan alınan, "id id Y X Z 0 &quot;kod&quot; &quot;&quot; &quot;&quot;" formatındaki dosya.</p>
+
+      <label for="saha_dxf">Saha DXF'i</label>
+      <input type="file" id="saha_dxf" name="saha_dxf" accept=".dxf" required>
+      <p class="hint">NetCAD'de nokta dosyasından üretilen alan/çizgi DXF'i. Tek bir günün/bölgenin tamamı olabilir — sistem içindeki farklı işleri kendisi ayıracak.</p>
+
+      <label for="background_dxf">İmar planı altlığı (opsiyonel)</label>
+      <input type="file" id="background_dxf" name="background_dxf" accept=".dxf">
+      <p class="hint">Bina, ada kenarı, cadde/sokak ismi gibi arka plan içeriği için (örn. KARATAY_...ATAŞMAN-KULLANIM.dxf). Boş bırakılırsa çıktıda arka plan olmaz.</p>
+
+      <div style="margin-top:20px"><button type="submit">Dosyaları incele</button></div>
+    </form>
+  </div>
+
+  <div class="panel">
+    <h3 style="margin-top:0">Ortak nokta kod tablosu</h3>
+    <table>
+      <tr><th>Kod</th><th>Açıklama</th><th>Ataşman kalemi</th></tr>
+      {% for row in point_codes %}
+      <tr><td><code>{{ row.kod }}</code></td><td>{{ row.aciklama }}</td><td>{{ row.kalem }}</td></tr>
+      {% endfor %}
+    </table>
+  </div>
+{% endblock %}

@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="tr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Ataşman Otomasyonu{% endblock %}</title>
+  <style>
+    :root { color-scheme: light; --bg:#f6f5f2; --panel:#ffffff; --ink:#22201c; --muted:#6b675f;
+            --accent:#8a5a2b; --accent-ink:#ffffff; --line:#e4e0d8; --good:#3f7a3f; }
+    * { box-sizing: border-box; }
+    body { margin:0; padding-block: 32px; padding-inline: 16px; background: var(--bg); color: var(--ink);
+           font: 16px/1.5 -apple-system, "Segoe UI", Roboto, sans-serif; }
+    .wrap { max-width: 760px; margin: 0 auto; }
+    h1 { font-size: 1.5rem; margin: 0 0 4px; }
+    .sub { color: var(--muted); margin: 0 0 24px; }
+    .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+             padding: 20px; margin-bottom: 20px; }
+    label { display:block; font-weight: 600; margin: 14px 0 4px; font-size: .92rem; }
+    label:first-child { margin-top: 0; }
+    input[type=text], input[type=file] { width:100%; padding: 9px 10px; border: 1px solid var(--line);
+           border-radius: 6px; font-size: 1rem; background:#fff; color: var(--ink); }
+    .hint { color: var(--muted); font-size: .85rem; margin-top: 4px; }
+    button, .btn { background: var(--accent); color: var(--accent-ink); border: none; border-radius: 6px;
+           padding: 11px 20px; font-size: 1rem; font-weight: 600; cursor: pointer; }
+    button:hover, .btn:hover { opacity: .92; }
+    .flash { background: #fbeee0; border: 1px solid #e8c9a0; color: #6b3f00; padding: 12px 14px;
+             border-radius: 8px; margin-bottom: 16px; }
+    .group { border: 1px solid var(--line); border-radius: 8px; padding: 14px; margin-bottom: 12px; }
+    .group.top { border-color: var(--accent); }
+    .group h3 { margin: 0 0 6px; font-size: 1.05rem; }
+    .meta { color: var(--muted); font-size: .88rem; }
+    .badge { display:inline-block; background:#eee7da; color:#6b5636; border-radius: 999px;
+             padding: 2px 9px; font-size: .78rem; font-weight: 600; margin-left: 6px; }
+    .badge.warn { background:#fbe4e0; color:#8a3a2b; }
+    table { border-collapse: collapse; width: 100%; font-size: .92rem; }
+    th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line); }
+    footer { color: var(--muted); font-size: .8rem; margin-top: 28px; text-align: center; }
+    nav.top { display:flex; gap:16px; margin-bottom: 20px; font-weight:600; }
+    nav.top a { color: var(--accent); text-decoration:none; }
+    nav.top a:hover { text-decoration:underline; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <nav class="top">
+      <a href="{{ url_for('index') }}">Ataşman Üret</a>
+      <a href="{{ url_for('icmal_index') }}">İcmal</a>
+    </nav>
+    {% with messages = get_flashed_messages() %}
+      {% if messages %}{% for m in messages %}<div class="flash">{{ m }}</div>{% endfor %}{% endif %}
+    {% endwith %}
+    {% block content %}{% endblock %}
+    <footer>Ataşman Otomasyonu · Faz 1</footer>
+  </div>
+</body>
+</html>

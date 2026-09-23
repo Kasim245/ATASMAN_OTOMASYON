@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% block content %}
+  <h1>Ataşman {{ hakedis_no }}/{{ sira_no }} üretildi</h1>
+  <p class="sub">{{ mahalle }} · {{ cadde_sokak }}</p>
+
+  <div class="panel">
+    <div style="margin-bottom:16px">
+      <a class="btn" href="{{ url_for('indir_dosya', session_id=session_id, dosya=dosya) }}">Ataşman DXF'ini indir</a>
+    </div>
+
+    {% if item_codes %}
+    <h3>Malzeme kalemi kodları</h3>
+    <p class="hint">Mahallenin kendi sürekli sayacından atandı (bir önceki ataşmanlardan devam ediyor).
+      NetCAD'in "Adı" alanı DXF ile yazılamadığı için, bu kodları ilgili parçalara NetCAD'de elle girin.</p>
+    <table>
+      <tr><th>Kalem</th><th>Atanan kodlar</th></tr>
+      {% for prefix, codes in item_codes.items() %}
+      <tr>
+        <td>{{ prefix_labels.get(prefix, prefix) }} ({{ prefix }})</td>
+        <td>{{ codes|join(', ') }}</td>
+      </tr>
+      {% endfor %}
+    </table>
+    {% endif %}
+
+    {% if minha_count %}
+      <p class="hint">Çizimde {{ minha_count }} adet minha (rögar) tespit edildi ve alanı ilgili
+        kalemden İcmal için düşüldü.</p>
+    {% endif %}
+  </div>
+
+  <p class="sub">
+    <a href="{{ url_for('index') }}">&larr; Yeni dosya yükle</a>
+    &nbsp;·&nbsp;
+    <a href="{{ url_for('icmal_index') }}">İcmal'i görüntüle</a>
+  </p>
+{% endblock %}
