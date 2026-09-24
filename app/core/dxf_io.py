@@ -71,6 +71,25 @@ def g(e, c):
     return [v for cc, v in e['codes'] if cc == c]
 
 
+def lwpolyline_vertices(e):
+    """Bir LWPOLYLINE entity'sinin (x, y) köşe listesini çıkarır -- her köşe
+    art arda gelen bir (10, x) / (20, y) grup kodu çifti (eski tip
+    POLYLINE/VERTEX'in aksine, LWPOLYLINE'da köşeler ayrı alt-entity değil,
+    doğrudan bu entity'nin kendi kod listesinde). Bulge (42) gibi diğer
+    köşe-başı kodlar, modülün geri kalanındaki VERTEX okuma mantığıyla aynı
+    şekilde yok sayılıyor -- sadece düz çizgili (bulge=0) parça sınırları
+    bekleniyor."""
+    verts = []
+    cur_x = None
+    for c, v in e['codes']:
+        if c == 10:
+            cur_x = float(v)
+        elif c == 20 and cur_x is not None:
+            verts.append((cur_x, float(v)))
+            cur_x = None
+    return verts
+
+
 def find_entities_section_span(pairs):
     """Return (start_idx, end_idx) of the (0,'SECTION')..(0,'ENDSEC') pair for ENTITIES."""
     s = e = None

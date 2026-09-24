@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block content %}
+  <h1>Şifremi unuttum</h1>
+  <p class="sub">Kullanıcı adınızı ya da hesabınıza kayıtlı e-postayı girin, size şifre sıfırlama
+    bağlantısı gönderelim.</p>
+
+  <div class="panel" style="max-width:380px">
+    <form method="post">
+      <label for="kullanici_adi_veya_email">Kullanıcı adı ya da e-posta</label>
+      <input type="text" id="kullanici_adi_veya_email" name="kullanici_adi_veya_email" required autofocus>
+
+      <div style="margin-top:20px"><button type="submit">Bağlantı gönder</button></div>
+    </form>
+    <p class="hint" style="margin-top:14px">
+      <a href="{{ url_for('giris') }}">← Girişe dön</a>
+    </p>
+  </div>
+{% endblock %}

@@ -1,0 +1,124 @@
+{% extends "base.html" %}
+{% block content %}
+  <h1>Yardım</h1>
+  <p class="sub">Ataşman Otomasyonu'nun nasıl kullanılacağı ve sık sorulan sorular.</p>
+
+  <div class="panel">
+    <h3 style="margin-top:0">Nasıl kullanılır?</h3>
+    <div class="steps">
+      <div class="step">
+        <span class="step-num">1</span>
+        <div>
+          <p class="step-title">Dosyaları yükleyin</p>
+          <p class="step-desc">"Ataşman Üret" sayfasından nokta (.ncn) ve saha (DXF) dosyalarını, hakediş
+            numarasıyla birlikte yükleyin. Saha dosyası zorunlu değildir -- sadece kodlu nokta dosyası da yeterli olabilir.</p>
+        </div>
+      </div>
+      <div class="step">
+        <span class="step-num">2</span>
+        <div>
+          <p class="step-title">Sahipsiz noktaları kontrol edin (varsa)</p>
+          <p class="step-desc">Kodu olup saha DXF'inde hiç çizgisi olmayan noktalar bulunursa "Kodu var,
+            çizgisi yok" ekranı çıkar. Önerilen grupları tek tek onaylayın ya da atlayın.</p>
+        </div>
+      </div>
+      <div class="step">
+        <span class="step-num">3</span>
+        <div>
+          <p class="step-title">Grupları (küme) kontrol edin</p>
+          <p class="step-desc">Sistem birbirine yakın parçaları otomatik olarak tek ataşman sayar. Gruplama
+            yanlış görünüyorsa (farklı sokaklar birleşti ya da tek iş ikiye bölündü), "yakınlık mesafesi"ni
+            değiştirip yeniden hesaplatabilirsiniz -- dosyaları tekrar yüklemenize gerek yok.</p>
+        </div>
+      </div>
+      <div class="step">
+        <span class="step-num">4</span>
+        <div>
+          <p class="step-title">Onay gereken parçaları yanıtlayın</p>
+          <p class="step-desc">Kodu tanınmayan ya da kodlaması belirsiz (ör. hiç parke kodu yok, tamamen
+            bordür/oluk kodlu) parçalar için ne olduklarını seçmeniz istenir.</p>
+        </div>
+      </div>
+      <div class="step">
+        <span class="step-num">5</span>
+        <div>
+          <p class="step-title">Bilgileri doldurup üretin</p>
+          <p class="step-desc">Her küme için mahalle, cadde/sokak, kapı no ve tarih bilgilerini doldurup
+            "Ataşman DXF'i üret" butonuna basın. DXF dosyanız iner ve verileri otomatik olarak İcmal'e işlenir.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h3 style="margin-top:0">Sıkça Sorulan Sorular</h3>
+
+    <details class="faq-item">
+      <summary>Sistem işleri nasıl gruplandırıyor, "küme" ne demek?<span class="faq-icon">+</span></summary>
+      <p>Birbirine belli bir mesafe içinde olan parçalar (varsayılan 150 metre) tek bir ataşman/iş kabul
+        edilir. Tek bir sabit mesafe her saha dosyası için doğru olamayacağından, küme ekranından bu mesafeyi
+        değiştirip grupları yeniden hesaplatabilirsiniz.</p>
+    </details>
+
+    <details class="faq-item">
+      <summary>"X parça için onayınız gerekiyor" uyarısı ne anlama geliyor?<span class="faq-icon">+</span></summary>
+      <p>İki farklı durumda çıkar: (1) hiç kod girilmemiş ya da tanınmayan bir parça bulunduğunda, ne
+        olduğunu (parke, bordür, oluk ya da atla) siz seçersiniz; (2) bir kapalı şeklin köşelerinde hiç
+        parke kodu yoksa ama tamamı/bir kısmı bordür veya oluk kodluysa -- bu gerçekten öyle ölçülmüş
+        olabilir ya da bir kodlama hatası olabilir, sistem size sorar.</p>
+    </details>
+
+    <details class="faq-item">
+      <summary>Bordür/oluk çizgileri neden ölçtüğüm noktanın tam üstünde değil?<span class="faq-icon">+</span></summary>
+      <p>Bordür/oluk taşının kendi genişliği kadar (12cm/30cm) parçanın dışına doğru kaydırılarak çiziliyor
+        -- NetCAD'de elle yaptığınız "alanı ölç, kenarına paralel at" adımının otomatiği. Bu sadece çizimin
+        konumunu etkiler, hakediş miktarını (ham nokta mesafesinden hesaplanan uzunluk) hiç değiştirmez.</p>
+    </details>
+
+    <details class="faq-item">
+      <summary>Minha (rögar) nasıl hesaplanıyor?<span class="faq-icon">+</span></summary>
+      <p>Her minha kendi küçük poligonu olarak ölçülür ve içinde bulunduğu parke parçasına otomatik
+        eşleştirilir. Ataşman DXF'inin başlığında tüm minha alanlarının toplamı görünür; İcmal'deki parke
+        miktarından ise içindeki minha alanı düşülmüş net miktar kullanılır.</p>
+    </details>
+
+    <details class="faq-item">
+      <summary>İcmal Excel'ini nasıl indiririm?<span class="faq-icon">+</span></summary>
+      <p>Üst menüden İcmal'e girin, hakediş numarasını yazıp "Göster"e basın, sayfanın altındaki "İcmal
+        Excel'ini indir" butonunu kullanın.</p>
+    </details>
+
+    <details class="faq-item">
+      <summary>Birim fiyatları nereden değiştiririm?<span class="faq-icon">+</span></summary>
+      <p>İcmal sayfasının alt kısmındaki "Birim fiyatlar" bölümünden (sadece yönetici hesapları
+        görebilir) T1-T8 kalemlerinin TL fiyatlarını girip kaydedebilirsiniz. Bu fiyatlar sözleşme
+        süresince sabit kabul edilir ve her İcmal'de kullanılır.</p>
+    </details>
+
+    <details class="faq-item">
+      <summary>Personel hesabı nasıl açarım, yönetici ile personel farkı ne?<span class="faq-icon">+</span></summary>
+      <p>"Personel" sayfasından (sadece yönetici hesapları görebilir) yeni hesap açabilirsiniz. Yönetici
+        tüm personelin ürettiği ataşmanları ve birim fiyatları görüp değiştirebilir; personel hesapları
+        sadece kendi ürettiklerini görür.</p>
+    </details>
+
+    <details class="faq-item">
+      <summary>Hangi dosya formatlarını yüklemeliyim?<span class="faq-icon">+</span></summary>
+      <p>Nokta dosyası .ncn formatında olmalı. Saha dosyası NetCAD'den DXF olarak dışa aktarılmış
+        olmalı -- hem eski tip (POLYLINE) hem yeni tip (LWPOLYLINE) kapalı çizgiler, hem de tek/çoklu
+        doğru olarak ölçülmüş bordür/oluk kayıtları destekleniyor.</p>
+    </details>
+
+    <details class="faq-item">
+      <summary>Bir hata alırsam ya da sonuç yanlış görünüyorsa ne yapmalıyım?<span class="faq-icon">+</span></summary>
+      <p>Ekran görüntüsünü ve kullandığınız dosyaları Kasım ERDAL'a iletin, birlikte inceleyelim --
+        iletişim bilgileri aşağıda ve "Hakkında" sayfasında yer alıyor.</p>
+    </details>
+  </div>
+
+  <div class="panel">
+    <h3 style="margin-top:0">Hâlâ yardıma mı ihtiyacınız var?</h3>
+    <p class="meta" style="margin:0 0 4px">Yetkili: Kasım ERDAL &middot; Tel: 0531 379 96 55</p>
+    <p class="meta" style="margin:0">E-posta: info@nordgismuhendislik.com</p>
+  </div>
+{% endblock %}

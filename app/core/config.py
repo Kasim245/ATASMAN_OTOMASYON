@@ -81,6 +81,17 @@ BORDUR_CODE_MAP = {'ebrdr': 'T5', 'ybrdr': 'T4'}
 OLUK_CODES = {'olk'}
 MINHA_CODES = {'m70'}
 
+# Gerçek saha verisinde aynı malzeme için farklı yazımlar görülebiliyor --
+# ör. "Ybrdr" (büyük harf) ya da "oluk"/"minha" (kısaltmasız) -- kod eşleşmesi
+# points.py::load_ncn() içinde her zaman küçük harfe çevrilip bu tablodan
+# geçiriliyor, böylece yukarıdaki kanonik kodlarla (ebrdr/ybrdr/olk/m70)
+# birebir aynı şekilde çalışıyor. Yeni bir yazım farkı görülürse buraya bir
+# satır eklemek yeterli -- eşleşme mantığının geri kalanı hiç değişmez.
+CODE_ALIASES = {
+    'oluk': 'olk',
+    'minha': 'm70',
+}
+
 # bordür/oluk taşının gerçek genişliği: sahada ölçülen parke kenar noktalarına
 # paralel, bu kadar dışa kaydırılarak çizilir (kullanıcının anlattığı NetCAD
 # alışkanlığıyla aynı: alanı ölçtükten sonra bordür/oluk hattı buraya paralel

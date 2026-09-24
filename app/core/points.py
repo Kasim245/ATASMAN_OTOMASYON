@@ -4,7 +4,18 @@ import math
 import collections
 
 from .geometry import dist
-from .config import PARKE_CODE_MAP, MINHA_CODES
+from .config import PARKE_CODE_MAP, MINHA_CODES, CODE_ALIASES
+
+
+def _normalize_code(raw):
+    """Saha ekibi/cihaz farklarına göre değişebilen kod yazımını (büyük/küçük
+    harf, kısaltmasız "oluk"/"minha" gibi) kanonik forma çevirir -- gerçek
+    kullanıcı verisiyle doğrulandı: aynı iş türü için "ybrdr" da "Ybrdr" da,
+    "olk" da "oluk" da görülebiliyor; bu normalize etmeden PARKE_CODE_MAP/
+    BORDUR_CODE_MAP/OLUK_CODES/MINHA_CODES eşleşmesi sessizce başarısız
+    olup parçayı 'unclassified' bırakıyordu."""
+    c = raw.strip().lower()
+    return CODE_ALIASES.get(c, c)
 
 
 def load_ncn(path_or_bytes):
@@ -18,7 +29,7 @@ def load_ncn(path_or_bytes):
     for line in raw.decode('cp1254').splitlines():
         m = re.match(r'\s*(\d+)\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)\s+\d+\s+"([^"]*)"', line)
         if m:
-            pts[int(m[1])] = (float(m[2]), float(m[3]), float(m[4]), m[5])
+            pts[int(m[1])] = (float(m[2]), float(m[3]), float(m[4]), _normalize_code(m[5]))
     return pts
 
 

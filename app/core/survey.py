@@ -26,7 +26,7 @@ the 7-piece group's centroid).
 import collections
 import math
 
-from .dxf_io import load_dxf_pairs, parse_entities, g
+from .dxf_io import load_dxf_pairs, parse_entities, g, lwpolyline_vertices
 from .points import (
     load_ncn, match_points_to_ncn, classify_polygon, find_bordur_edges, find_orphan_runs,
 )
@@ -39,11 +39,21 @@ from .background import extract_background
 from .mahalle import load_mahalle_boundaries, find_mahalle
 
 # Pieces within this many meters of each other (single-link) are assumed to
-# be the same field job. Chosen empirically against the one real batch file
-# available: it cleanly recovers the 7-piece Akabe 4/45 group (max internal
-# gap ~95m) while keeping every other street's pieces separate (nearest
-# piece belonging to a different job sits ~190m+ away). Revisit once more
-# real multi-street batches are seen.
+# be the same field job. Chosen empirically against the Akabe 4/45 fixture:
+# it cleanly recovers that 7-piece group (max internal gap ~95m) while
+# keeping every other street's pieces separate there (nearest piece
+# belonging to a different job sits ~190m+ away).
+#
+# Confirmed against a second real batch (Necmetin, Emirgazi Mh., 53 pieces
+# across ~3 visually distinct street segments) that NO single fixed radius
+# can be correct for every batch: Akabe's one legitimate job needs >=95m of
+# single-link tolerance to stay merged, while Necmetin's 3 separate jobs
+# only separate correctly below ~80m -- tightening the default to fix one
+# real file silently breaks the other. So this constant is a starting GUESS
+# only; main.py's /regroup route lets the user re-cluster the same upload
+# with a different radius from the clusters.html screen when the guess is
+# visibly wrong (e.g. one giant group spanning several streets, or a real
+# single job split into too many pieces), without re-uploading anything.
 CLUSTER_RADIUS_M = 150.0
 
 
@@ -83,7 +93,22 @@ def _build_candidate(verts, ids, pts):
     # 'unclassified' işaretiyle kümeye dahil ediliyor (bkz.
     # classify_unclassified_piece ve main.py::generate). Alanı yine de
     # hesaplayıp saklıyoruz ki kullanıcı "bu bir parke" derse hazır olsun.
-    unclassified = not parke_key and not piece_bordur
+    #
+    # Kapalı bir şeklin köşelerinin HİÇBİRİNDE parke kodu yoksa (parke_key
+    # None) ama TÜMÜ ya da bir kısmı bordür/oluk kodluysa -- kullanıcının
+    # kendisinin işaret ettiği gerçek bir belirsizlik: bu ya sahada gerçekten
+    # sadece bordür/oluk olarak ölçülmüş bir şekil (ör. bir oluk kanalı), ya
+    # da bir kodlama hatası (aslında içi parke olması gerekirken tüm köşeler
+    # yanlışlıkla bordür/oluk kodlanmış). Geometri tek başına bunu
+    # çözemeyeceği için (uzunluk mu, alan mı ödenecek -- büyük fark yaratır)
+    # bu da SESSİZCE bordür/oluk kabul edilmiyor, aynı 'unclassified'
+    # onay akışına (review_reason='full_bordur_no_parke') dahil ediliyor --
+    # tespit edilen bordür/oluk kırılımı (piece_bordur) saklanıyor ki
+    # kullanıcı "evet doğru" derse tekrar hesaplamaya gerek kalmasın.
+    review_reason = None
+    if not parke_key:
+        review_reason = 'full_bordur_no_parke' if piece_bordur else 'no_code'
+    unclassified = review_reason is not None
     candidate = {
         'verts': verts,
         'area': area2d(verts) if (parke_key or unclassified) else 0.0,
@@ -94,8 +119,78 @@ def _build_candidate(verts, ids, pts):
         'minha_area': 0.0,
         'minha_shapes': [],
         'unclassified': unclassified,
+        'review_reason': review_reason,
     }
     return candidate, None
+
+
+def _standalone_line_candidates(ents_survey, pts, consumed_ids, existing_candidates):
+    """Kapalı bir parça poligonunun KENARI olarak değil, sahada doğrudan
+    bağımsız bir LINE olarak (ya da art arda birkaç LINE'dan oluşan "çoklu
+    doğru" olarak) ölçülmüş bordür/oluk kayıtlarını bulur.
+
+    find_bordur_edges() SADECE bir poligonun vertex_ids listesindeki ardışık
+    aynı kodlu köşe çiftlerini yakalıyor -- yanında hiç parke alanı ölçülmemiş
+    (veya parke alanı bambaşka bir çizgide, bordürden bağımsız ölçülmüş) bir
+    bordür/oluk hattının tek başına bir LINE entity olarak durduğu durumu hiç
+    görmüyordu (gerçek necmetin.dxf'te böyle 30 LINE bulundu: 24 ybrdr,
+    3 olk, 1 m70, 1 yprk -- bir kısmı art arda ekleniyor, tek bir sürekli
+    bordür/oluk hattı oluşturuyor).
+
+    Her uygun LINE, kendi başına bir "aday" (candidate) haline getirilir --
+    tıpkı bir parçanın elle 'uzunluk' seçilmiş hali gibi (parke_key yok,
+    sadece piece_bordur dolu) -- böylece totals_from_candidates() ve
+    generator.py'deki çizim adımı hiçbir özel durum eklemeden bunları da
+    otomatik olarak işler.
+
+    'Dışa doğru' kayma yönü için bir parça poligonunun aksine doğal bir
+    centroid yok -- en yakın gerçek parke parçası (varsa, 30m içindeyse) ona
+    göre kaydırılıyor; yoksa hattın kendi orta noktası kullanılıyor (bu
+    durumda hangi tarafa kayacağı rastgele ama tutarlı olur -- SADECE çizim
+    konumunu etkiler, hakediş miktarını (ham nokta mesafesi) hiç etkilemez)."""
+    target_codes = dict(BORDUR_CODE_MAP)
+    for code in OLUK_CODES:
+        target_codes[code] = 'T8'
+
+    out = []
+    for e in ents_survey:
+        if e['type'] != 'LINE':
+            continue
+        x1, y1, x2, y2 = g(e, 10), g(e, 20), g(e, 11), g(e, 21)
+        if not (x1 and y1 and x2 and y2):
+            continue
+        p1 = (float(x1[0]), float(y1[0]))
+        p2 = (float(x2[0]), float(y2[0]))
+        ids = match_points_to_ncn([p1, p2], pts)
+        if ids[0] is None or ids[1] is None:
+            continue
+        c1, c2 = pts[ids[0]][3], pts[ids[1]][3]
+        if c1 != c2 or c1 not in target_codes:
+            continue
+        consumed_ids.update(ids)
+        key = target_codes[c1]
+        mx, my = (p1[0] + p2[0]) / 2.0, (p1[1] + p2[1]) / 2.0
+        ref = (mx, my)
+        pool = existing_candidates + out
+        if pool:
+            nearest = min(pool, key=lambda c: (c['cx'] - mx) ** 2 + (c['cy'] - my) ** 2)
+            if dist((nearest['cx'], nearest['cy']), (mx, my)) <= 30.0:
+                ref = (nearest['cx'], nearest['cy'])
+        offset_m = OLUK_OFFSET_M if key == 'T8' else BORDUR_OFFSET_M
+        p1o, p2o = offset_edge_outward(p1, p2, ref, offset_m)
+        out.append({
+            'verts': [p1, p2],
+            'area': 0.0,
+            'parke_key': None,
+            'piece_bordur': [(key, p1, p2, dist(p1, p2), p1o, p2o)],
+            'cx': mx, 'cy': my,
+            'ymin': min(p1[1], p2[1]),
+            'minha_area': 0.0,
+            'minha_shapes': [],
+            'unclassified': False,
+            'review_reason': None,
+        })
+    return out
 
 
 def parse_survey_candidates(ncn, saha_dxf):
@@ -133,6 +228,8 @@ def parse_survey_candidates(ncn, saha_dxf):
         curp = None
         for e in ents_survey:
             if e['type'] == 'POLYLINE':
+                # eski tip: köşeler ayrı VERTEX entity'leri olarak, SEQEND'e
+                # kadar art arda gelir.
                 flag = int(g(e, 70)[0]) if g(e, 70) else 0
                 curp = {'flag': flag, 'v': []}
                 polys.append(curp)
@@ -140,6 +237,12 @@ def parse_survey_candidates(ncn, saha_dxf):
                 curp['v'].append((float(g(e, 10)[0]), float(g(e, 20)[0])))
             elif e['type'] == 'SEQEND':
                 curp = None
+            elif e['type'] == 'LWPOLYLINE':
+                # yeni tip (NetCAD'in güncel sürümlerinin varsayılan çıktısı):
+                # köşeler alt-entity değil, doğrudan bu entity'nin kendi kod
+                # listesinde -- tek adımda tam bir polyline.
+                flag = int(g(e, 70)[0]) if g(e, 70) else 0
+                polys.append({'flag': flag, 'v': lwpolyline_vertices(e)})
 
     candidates = []
     minha_polys = []  # [(verts, area, centroid)], matched to a host piece below
@@ -167,6 +270,13 @@ def parse_survey_candidates(ncn, saha_dxf):
                 c['minha_area'] += area
                 c['minha_shapes'].append(verts)
                 break
+
+    # parke alanı olmayıp doğrudan bağımsız LINE(ler) olarak ölçülmüş
+    # bordür/oluk kayıtları (bkz. _standalone_line_candidates docstring) --
+    # şu ana kadar bulunan gerçek parçalardan sonra çalıştırılıyor ki "en
+    # yakın parça" referansı (dışa kayma yönü için) elde mevcut olsun.
+    if saha_dxf:
+        candidates.extend(_standalone_line_candidates(ents_survey, pts, consumed_ids, candidates))
 
     return candidates, pts, consumed_ids
 
@@ -222,6 +332,7 @@ def classify_unclassified_piece(candidate, choice_key, choice_kind):
         candidate['parke_key'] = None
         candidate['area'] = 0.0
     candidate['unclassified'] = False
+    candidate['review_reason'] = None
 
 
 def cluster_candidates(candidates, radius=CLUSTER_RADIUS_M):

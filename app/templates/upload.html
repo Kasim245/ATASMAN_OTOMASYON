@@ -1,8 +1,26 @@
 {% extends "base.html" %}
 {% block content %}
   <h1>Ataşman DXF Üretimi</h1>
+  {% if nav_current_is and nav_current_is.aktif %}
+  <p class="sub">Nokta dosyanızı ve saha DXF'inizi yükleyin; sistem hangi işlerin (sokakların) bu dosyada
+    olduğunu bulup size gösterecek. Şu an <strong>{{ nav_current_is.ad }}</strong> işi için üretim
+    yapıyorsunuz{% if nav_isler|length > 1 %} -- değiştirmek için üst menüdeki iş seçiciyi kullanın{% endif %}.</p>
+  {% else %}
   <p class="sub">Nokta dosyanızı ve saha DXF'inizi yükleyin; sistem hangi işlerin (sokakların) bu dosyada olduğunu bulup size gösterecek.</p>
+  {% endif %}
 
+  {% if not nav_isler %}
+  <div class="warning-box">
+    <p style="margin:0">Henüz hiçbir işe atanmamışsınız, bu yüzden ataşman üretemezsiniz. Yöneticinizden
+      sizi "Personel" sayfasından bir işe atamasını isteyin.</p>
+  </div>
+  {% elif not nav_current_is.aktif %}
+  <div class="warning-box">
+    <p style="margin:0">Şu an üst menüden seçili olan "<strong>{{ nav_current_is.ad }}</strong>" işi için
+      ataşman üretimi henüz sisteme eklenmedi -- yakında entegre edilecek.
+      {% if nav_isler|length > 1 %}Üst menüdeki iş seçiciden aktif bir işe geçebilirsiniz.{% endif %}</p>
+  </div>
+  {% else %}
   <div class="panel">
     <form action="{{ url_for('analyze') }}" method="post" enctype="multipart/form-data">
       <label for="hakedis_no">Hangi hakediştesiniz?</label>
@@ -26,6 +44,7 @@
       <div style="margin-top:20px"><button type="submit">Dosyaları incele</button></div>
     </form>
   </div>
+  {% endif %}
 
   <div class="panel">
     <h3 style="margin-top:0">Ortak nokta kod tablosu</h3>

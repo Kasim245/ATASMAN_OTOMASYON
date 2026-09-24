@@ -5,11 +5,29 @@
 
   <div class="panel">
     <h3 style="margin-top:0">Hızlı erişim</h3>
-    <div style="display:flex; gap:12px; flex-wrap:wrap">
-      <a class="btn" href="{{ url_for('index') }}" style="text-decoration:none; display:inline-block">Ataşman Üret</a>
-      <a class="btn" href="{{ url_for('icmal_index') }}" style="text-decoration:none; display:inline-block">İcmal</a>
+    <div class="quick-grid">
+      <a class="quick-card" href="{{ url_for('index') }}">
+        <span class="quick-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>
+        </span>
+        <span class="quick-title">Ataşman Üret</span>
+        <p class="quick-desc">Nokta ve saha dosyalarını yükleyip yeni bir ataşman DXF'i oluşturun.</p>
+      </a>
+      <a class="quick-card" href="{{ url_for('icmal_index') }}">
+        <span class="quick-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 10h18"/><path d="M9 10v10"/></svg>
+        </span>
+        <span class="quick-title">İcmal</span>
+        <p class="quick-desc">Hakediş kayıtlarını görüntüleyin, birim fiyatları düzenleyin, Excel indirin.</p>
+      </a>
       {% if is_admin %}
-      <a class="btn" href="{{ url_for('personel') }}" style="text-decoration:none; display:inline-block">Personel</a>
+      <a class="quick-card" href="{{ url_for('personel') }}">
+        <span class="quick-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+        </span>
+        <span class="quick-title">Personel</span>
+        <p class="quick-desc">Ekibinize yeni hesap açın, mevcut hesapları görüntüleyin.</p>
+      </a>
       {% endif %}
     </div>
   </div>

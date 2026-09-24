@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block content %}
+  <h1>Şifre belirle</h1>
+  <p class="sub">Merhaba {{ ad_soyad }}, aşağıdan yeni şifrenizi belirleyin.</p>
+
+  <div class="panel" style="max-width:380px">
+    <form method="post">
+      <label for="sifre">Yeni şifre</label>
+      <input type="password" id="sifre" name="sifre" required minlength="4" autofocus>
+
+      <label for="sifre2">Yeni şifre (tekrar)</label>
+      <input type="password" id="sifre2" name="sifre2" required minlength="4">
+
+      <div style="margin-top:20px"><button type="submit">Şifreyi kaydet</button></div>
+    </form>
+  </div>
+{% endblock %}

@@ -1,26 +1,54 @@
 {% extends "base.html" %}
 {% block content %}
   <h1>Personel</h1>
-  <p class="sub">Yeni bir çalışan için hesap açın (kendi kullanıcı adı + şifresiyle giriş yapıp kendi ölçtüğü
-    ataşmanları üretir), ya da mevcut personeli görün.</p>
+  <p class="sub">Yeni bir çalışan için hesap açın (kendisine kendi şifresini belirlemesi için bir bağlantı
+    gönderilir), ya da mevcut personeli görün.</p>
 
-  <div class="panel" style="max-width:420px">
+  <div class="panel" style="max-width:460px">
     <h3 style="margin-top:0">Yeni personel ekle</h3>
     <form action="{{ url_for('personel') }}" method="post">
       <label for="ad_soyad">Ad Soyad</label>
       <input type="text" id="ad_soyad" name="ad_soyad" placeholder="Emre Olgun" required>
 
+      <label for="meslek">Meslek</label>
+      <input type="text" id="meslek" name="meslek" placeholder="Harita Mühendisi" list="meslek-list">
+      <datalist id="meslek-list">
+        <option value="Harita Mühendisi">
+        <option value="Harita Teknikeri">
+        <option value="İnşaat Mühendisi">
+        <option value="İnşaat Teknikeri">
+        <option value="Tekniker">
+        <option value="Teknisyen">
+      </datalist>
+
+      <label for="telefon">Telefon</label>
+      <input type="text" id="telefon" name="telefon" placeholder="0532 000 00 00">
+
+      <label for="email">E-posta</label>
+      <input type="email" id="email" name="email" placeholder="emre.olgun@ornek.com" required>
+      <p class="hint" style="margin-top:0">Şifreyi siz belirlemiyorsunuz -- hesap açıldığında bu adrese kendi
+        şifresini belirlemesi için bir bağlantı gönderilir.</p>
+
       <label for="kullanici_adi">Kullanıcı adı</label>
       <input type="text" id="kullanici_adi" name="kullanici_adi" placeholder="emre.olgun" required>
-
-      <label for="sifre">Şifre</label>
-      <input type="password" id="sifre" name="sifre" required minlength="4">
 
       <label for="rol">Rol</label>
       <select id="rol" name="rol">
         <option value="personel" selected>Personel (kendi işini görür/üretir)</option>
         <option value="yonetici">Yönetici (her şeyi görür/yönetir)</option>
       </select>
+
+      <label>Hangi iş(ler)de çalışabilir?</label>
+      <p class="hint" style="margin-top:0">Bu personel, ataşman üretirken sadece burada işaretlediğiniz iş(ler)i seçebilir.</p>
+      {% for i in isler %}
+      <div style="display:flex; align-items:center; gap:8px; padding:6px 0">
+        <input type="checkbox" id="is_{{ i.id }}" name="is_ids" value="{{ i.id }}"
+               {% if i.aktif %}checked{% endif %}>
+        <label for="is_{{ i.id }}" style="margin:0; font-weight:500">{{ i.ad }}
+          {% if not i.aktif %}<span class="badge">yakında</span>{% endif %}
+        </label>
+      </div>
+      {% endfor %}
 
       <div style="margin-top:20px"><button type="submit">Hesap oluştur</button></div>
     </form>
@@ -30,16 +58,58 @@
     <h3 style="margin-top:0">Mevcut personel ({{ users|length }})</h3>
     <div class="table-scroll">
     <table>
-      <tr><th>Ad Soyad</th><th>Kullanıcı adı</th><th>Rol</th><th>Eklendi</th></tr>
+      <tr><th>Ad Soyad</th><th>Meslek</th><th>Telefon</th><th>E-posta</th><th>Kullanıcı adı</th><th>Rol</th><th>Çalıştığı iş(ler)</th><th>Eklendi</th></tr>
       {% for u in users %}
       <tr>
         <td>{{ u.ad_soyad }}</td>
+        <td>{{ u.meslek or '-' }}</td>
+        <td>{{ u.telefon or '-' }}</td>
+        <td>{{ u.email or '-' }}</td>
         <td><code>{{ u.kullanici_adi }}</code></td>
         <td>{{ 'Yönetici' if u.rol == 'yonetici' else 'Personel' }}</td>
+        <td>{{ u.isler or '-' }}</td>
         <td>{{ u.created_at }}</td>
       </tr>
       {% endfor %}
     </table>
     </div>
+  </div>
+
+  <div class="panel">
+    <h3 style="margin-top:0">Personel bilgilerini güncelle</h3>
+    <p class="hint" style="margin-top:0">Meslek/telefon/e-posta bilgisini düzeltmek, yeni bir iş eklendiğinde
+      kimin çalışabileceğini işaretlemek (kendiniz dahil) ya da birine şifre sıfırlama bağlantısı göndermek
+      için personeli seçip açın.</p>
+    {% for u in users %}
+    <details class="isler-edit">
+      <summary>{{ u.ad_soyad }} <span class="isler-edit-current">-- {{ u.isler or 'hiçbir işe atanmamış' }}</span></summary>
+      <form action="{{ url_for('personel_guncelle', user_id=u.id) }}" method="post" class="isler-edit-form">
+        <label style="margin-top:0">Meslek</label>
+        <input type="text" name="meslek" value="{{ u.meslek or '' }}">
+
+        <label>Telefon</label>
+        <input type="text" name="telefon" value="{{ u.telefon or '' }}">
+
+        <label>E-posta</label>
+        <input type="email" name="email" value="{{ u.email or '' }}" required>
+
+        <label style="margin-bottom:2px">Hangi iş(ler)de çalışabilir?</label>
+        {% for i in isler %}
+        <label class="isler-edit-check">
+          <input type="checkbox" name="is_ids" value="{{ i.id }}" {% if i.id in u.is_ids %}checked{% endif %}>
+          {{ i.ad }}{% if not i.aktif %} <span class="badge">yakında</span>{% endif %}
+        </label>
+        {% endfor %}
+
+        <div style="display:flex; gap:10px; flex-wrap:wrap; margin-top:4px">
+          <button type="submit" class="btn-sm">Kaydet</button>
+          <button type="submit" class="btn-sm btn-secondary" formnovalidate
+                  formaction="{{ url_for('personel_sifre_sifirla', user_id=u.id) }}">
+            Şifre sıfırlama bağlantısı gönder
+          </button>
+        </div>
+      </form>
+    </details>
+    {% endfor %}
   </div>
 {% endblock %}

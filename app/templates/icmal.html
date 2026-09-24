@@ -1,8 +1,10 @@
 {% extends "base.html" %}
 {% block content %}
-  <h1>İcmal (hakediş özeti)</h1>
-  <p class="sub">Her "ataşman DXF'i üret" işleminde o ataşmanın verileri burada otomatik birikir.
-    Hakediş bittiğinde, o hakediş numarasını seçip İcmal Excel'ini indirebilirsiniz.</p>
+  <h1>İcmal</h1>
+  <p class="sub">Hakediş özeti -- her "ataşman DXF'i üret" işleminde o ataşmanın verileri burada otomatik birikir.
+    Hakediş bittiğinde, o hakediş numarasını seçip İcmal Excel'ini indirebilirsiniz.
+    {% if nav_current_is %}Şu an <strong>{{ nav_current_is.ad }}</strong> işinin kayıtlarını görüyorsunuz --
+    her işin hakediş numaraları kendi başına, bağımsız sayılır.{% endif %}</p>
 
   <div class="panel">
     <form method="get" style="display:flex; gap:10px; align-items:flex-end;">

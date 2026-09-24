@@ -3,6 +3,19 @@
   <h1>Tespit edilen işler</h1>
   <p class="sub">Hakediş <strong>{{ hakedis_no }}</strong> · Dosyada {{ groups|length }} ayrı iş kümesi bulundu (yakınlıklarına göre gruplandı). Hangisi bu ataşmana aitse onun altındaki formu doldurup üretin.</p>
 
+  <div class="panel">
+    <h3 style="margin-top:0">Gruplama yanlış mı görünüyor?</h3>
+    <p class="hint">Sistem, birbirine yakın parçaları otomatik olarak tek ataşman sayar (şu an <strong>{{ cluster_radius|int }} metre</strong> içindekiler birleşiyor). Farklı sokaklardaki parçalar yanlışlıkla tek grupta toplandıysa bu sayıyı küçültün; aslında tek iş olan bir grup gereksiz yere ikiye bölündüyse büyütün. Dosyaları yeniden yüklemenize gerek yok.</p>
+    <form action="{{ url_for('regroup') }}" method="post" style="display:flex; gap:10px; align-items:flex-end; flex-wrap:wrap">
+      <input type="hidden" name="session_id" value="{{ session_id }}">
+      <div>
+        <label for="cluster_radius" style="margin-top:0">Yakınlık mesafesi (metre)</label>
+        <input type="text" id="cluster_radius" name="cluster_radius" value="{{ cluster_radius|int }}" style="max-width:140px">
+      </div>
+      <div style="margin-bottom:2px"><button type="submit">Grupları yeniden hesapla</button></div>
+    </form>
+  </div>
+
   {% for group in groups %}
   <div class="group {% if loop.first %}top{% endif %}">
     <h3>Küme {{ loop.index }}
@@ -24,13 +37,28 @@
       <input type="hidden" name="template_scale" value="{{ group.suggested_scale or '' }}">
 
       {% if group.unclassified_count %}
+      {% set bordur_label = {'T4': 'Yeni Bordür', 'T5': 'Eski Bordür', 'T8': 'Oluk Taşı'} %}
       <div class="warning-box">
-        <p><strong>⚠ {{ group.unclassified_count }} parçanın kodu tanınamadı</strong>
-          (nokta kodu boş bırakılmış ya da bilinmeyen bir kod girilmiş). Ataşmanı üretmeden
-          önce, aşağıdaki parça(lar)ın ne olduğunu seçin:</p>
+        <p><strong>⚠ {{ group.unclassified_count }} parça için onayınız gerekiyor</strong> --
+          ataşmanı üretmeden önce aşağıdakileri kontrol edin:</p>
         {% for candidate in group.candidates %}
           {% if candidate.unclassified %}
           <div class="unclassified-piece">
+            {% if candidate.review_reason == 'full_bordur_no_parke' %}
+            <label>Bu kapalı şeklin hiçbir köşesinde parke kodu yok -- tamamı ya da bir kısmı
+              bordür/oluk kodlu (~{{ '%.1f'|format(candidate.area) }} m² alanlı, sahada
+              X={{ '%.0f'|format(candidate.cx) }} Y={{ '%.0f'|format(candidate.cy) }} civarında).
+              Tespit edilen kenarlar:
+              {% for bkey, p1, p2, d, p1o, p2o in candidate.piece_bordur %}{{ bordur_label.get(bkey, bkey) }} {{ '%.1f'|format(d) }} m{% if not loop.last %}, {% endif %}{% endfor %}.
+              Bu doğru mu, yoksa bu aslında bir kodlama hatası olup gerçekte bir parke alanı mı?</label>
+            <select name="piece_type_{{ loop.index0 }}" required>
+              <option value="keep" selected>Evet doğru -- bordür/oluk olarak bırak</option>
+              {% for key, kind, label in manual_piece_choices if kind == 'area' %}
+              <option value="{{ key }}:{{ kind }}">Hayır, aslında {{ label }} (tüm alanı say)</option>
+              {% endfor %}
+              <option value="skip">Bu parçayı atla (dikkate alma)</option>
+            </select>
+            {% else %}
             <label>Kodsuz parça (~{{ '%.1f'|format(candidate.area) }} m² alanlı kapalı şekil, sahada X={{ '%.0f'|format(candidate.cx) }} Y={{ '%.0f'|format(candidate.cy) }} civarında)</label>
             <select name="piece_type_{{ loop.index0 }}" required>
               <option value="" disabled selected>-- Seçiniz --</option>
@@ -39,6 +67,7 @@
               {% endfor %}
               <option value="skip">Bu parçayı atla (dikkate alma)</option>
             </select>
+            {% endif %}
           </div>
           {% endif %}
         {% endfor %}

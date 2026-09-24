@@ -1,0 +1,110 @@
+{% extends "base.html" %}
+{% block content %}
+  <h1>Hakkında</h1>
+  <p class="sub">Nordgis Mühendislik ve bu yazılım hakkında.</p>
+
+  <div class="panel">
+    <div class="about-hero">
+      {% if has_logo %}
+      <img src="{{ url_for('static', filename='logo.png') }}" alt="Nordgis Mühendislik logosu">
+      {% endif %}
+      <div>
+        <h3 style="margin:0 0 4px">Nordgis Mühendislik Harita İnşaat</h3>
+        <p class="meta" style="margin:0">2024 yılında Kasım Erdal tarafından Konya'da kurulmuştur.</p>
+      </div>
+    </div>
+    <p style="margin:16px 0 0">
+      Mühendislik, harita ve inşaat alanlarında entegre çözümler sunan çok disiplinli bir
+      firmayız. Hedefimiz yüksek hassasiyetli teknolojik çözümler üretmek ve bu alanda
+      güvenilir bir referans marka olmaktır.
+    </p>
+    <div class="stats-row">
+      <div class="stat"><span class="stat-num">2024</span><span class="stat-label">Kuruluş yılı</span></div>
+      <div class="stat"><span class="stat-num">18+</span><span class="stat-label">Tamamlanmış proje</span></div>
+      <div class="stat"><span class="stat-num">3+</span><span class="stat-label">Devam eden proje</span></div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h3 style="margin-top:0">Hizmetlerimiz</h3>
+    <p class="section-lead">Etüt ve projeden uygulamaya, mühendislik ve inşaatın tüm aşamalarında yanınızdayız.</p>
+    <div class="service-grid">
+      <div class="service-card">
+        <span class="quick-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M1 6v16l7-4 8 4 7-4V2l-7 4-8-4-7 4z"/><path d="M8 2v16"/><path d="M16 6v16"/></svg></span>
+        <span class="service-title">Etüt ve Proje</span>
+        <p class="service-desc">Yol, enerji, sulama, baraj ve yenilenebilir enerji projeleri.</p>
+      </div>
+      <div class="service-card">
+        <span class="quick-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2Z"/><circle cx="12" cy="13" r="4"/></svg></span>
+        <span class="service-title">Fotogrametri</span>
+        <p class="service-desc">Drone ve hava fotoğrafıyla ölçme, 3B modelleme.</p>
+      </div>
+      <div class="service-card">
+        <span class="quick-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polygon points="3 11 22 2 13 21 11 13 3 11"/></svg></span>
+        <span class="service-title">Karayolu &amp; Altyapı Mühendisliği</span>
+        <p class="service-desc">Karayolu, altyapı ve üstyapı projelerinin planlama ve uygulaması.</p>
+      </div>
+      <div class="service-card">
+        <span class="quick-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg></span>
+        <span class="service-title">Kamulaştırma</span>
+        <p class="service-desc">Kamu ve özel sektör projelerinde kamulaştırma süreçleri.</p>
+      </div>
+      <div class="service-card">
+        <span class="quick-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg></span>
+        <span class="service-title">Coğrafi Bilgi Sistemleri</span>
+        <p class="service-desc">Mekansal veri analizi ve yönetimi (CBS).</p>
+      </div>
+      <div class="service-card">
+        <span class="quick-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 21V7l8-4 8 4v14"/><path d="M9 21v-6h6v6"/><path d="M9 11h.01M15 11h.01"/></svg></span>
+        <span class="service-title">İmar Planı</span>
+        <p class="service-desc">Kent planlama çalışmaları ve uygulamaları.</p>
+      </div>
+      <div class="service-card">
+        <span class="quick-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg></span>
+        <span class="service-title">Kadastro</span>
+        <p class="service-desc">Mülkiyet hakkı belirleme çalışmaları.</p>
+      </div>
+      <div class="service-card">
+        <span class="quick-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94Z"/></svg></span>
+        <span class="service-title">Altyapı &amp; Asfalt Yol Yapımı</span>
+        <p class="service-desc">Altyapı yapım ve asfalt yol yapım işleri.</p>
+      </div>
+    </div>
+    <p class="meta" style="margin:16px 0 0">Bazı referanslarımız:</p>
+    <div class="ref-badges">
+      <span class="ref-badge">TÜBİTAK MAM</span>
+      <span class="ref-badge">DHMİ</span>
+      <span class="ref-badge">BOTAŞ</span>
+      <span class="ref-badge">Kulu Belediyesi</span>
+      <span class="ref-badge">Erdemli Belediyesi</span>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h3 style="margin-top:0">Bu yazılım hakkında</h3>
+    <p>
+      Ataşman Otomasyonu, saha ekibimizin GNSS ile ölçtüğü nokta ve saha verilerini alıp
+      ataşman (yapıldı/as-built) DXF çizimini ve hakediş miktarlarını otomatik olarak
+      üreten, firmamıza özel geliştirilmiş bir iç araçtır. NetCAD'de elle yapılan
+      "alanı ölç, kenarına bordür/oluk paralel at, şablona yerleştir, İcmal'e işle"
+      adımlarını otomatikleştirerek zaman kazandırmak amacıyla tasarlandı.
+    </p>
+    <p style="margin-bottom:0">
+      Şu anki kapsamı Karatay Belediyesi AYKOME parke/tretuvar tamirat işimize göre
+      şekillendi; parke, bordür, oluk ve minha (rögar) kalemlerini tanıyıp hakediş
+      İcmal tablosuna işliyor. Yazılım, ihtiyaç oldukça yeni iş türlerini ve saha
+      senaryolarını kapsayacak şekilde geliştirilmeye devam ediyor.
+    </p>
+  </div>
+
+  <div class="panel">
+    <h3 style="margin-top:0">İletişim</h3>
+    <p class="meta" style="margin:0 0 4px">Feritpaşa Mahallesi Malazgirt Sokak No:13/401, Selçuklu/Konya</p>
+    <p class="meta" style="margin:0 0 4px">Yetkili: Kasım ERDAL &middot; Tel: 0531 379 96 55</p>
+    <p class="meta" style="margin:0 0 4px">E-posta: info@nordgismuhendislik.com</p>
+    <p class="meta" style="margin:0 0 4px">Çalışma saatleri: Hafta içi ve Cumartesi 08:30-18:00, Pazar kapalı</p>
+    <p class="meta" style="margin:0">
+      <a href="https://www.nordgismuhendislik.com" target="_blank" rel="noopener">nordgismuhendislik.com</a>
+    </p>
+  </div>
+{% endblock %}

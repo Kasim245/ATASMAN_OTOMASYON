@@ -8,15 +8,16 @@ zaten hazır kurulu geliyordu -- işlevsel olarak fark yok, ikisi de aynı işi
 görüyor. Gerçek sunucuya (Render) taşınırken bu hiçbir şeyi değiştirmez.
 """
 import os
+import secrets
 import shutil
 import tempfile
 import uuid
 
-from flask import Flask, render_template, request, send_file, redirect, url_for, flash, session
+from flask import Flask, render_template, request, send_file, redirect, url_for, flash, session, g
 
 from .core.survey import (
     parse_survey_candidates, describe_clusters, classify_unclassified_piece,
-    build_reconstruction_suggestions,
+    build_reconstruction_suggestions, CLUSTER_RADIUS_M,
 )
 from .core.preview import render_run_preview_svg
 from .core.generator import AtasmanInput, generate_atasman
@@ -27,9 +28,13 @@ from .core.db import (
     init_db, save_atasman, list_hakedis_numbers, get_records,
     get_unit_prices, set_unit_prices, delete_record, T_KEYS,
     allocate_item_codes, count_users, create_user, get_user_by_username,
+    get_user_by_id, get_user_by_email, update_user_info, set_user_password,
+    create_password_token, get_password_token, kullan_password_token,
     list_users, user_atasman_stats, per_user_atasman_counts,
+    list_isler, get_is_by_id, get_user_isler, set_user_isler,
 )
 from .core.icmal_xlsx import build_icmal_workbook
+from .core.mailer import send_mail, MailGonderilemedi
 from .core import auth
 
 app = Flask(__name__)
@@ -43,8 +48,11 @@ _LOGO_PATH = os.path.join(app.static_folder, 'logo.png')
 def _inject_branding():
     # kullanıcı kendi logosunu app/static/logo.png olarak eklediğinde başlıkta
     # otomatik görünür -- dosya yoksa sadece yazı gösterilir, kırık resim
-    # ikonu çıkmaz.
-    return {'has_logo': os.path.exists(_LOGO_PATH)}
+    # ikonu çıkmaz. nav_isler/nav_current_is da her sayfada üst menüdeki iş
+    # değiştiriciyi çizebilmek için buradan geliyor (bkz. _resolve_current_is).
+    return {'has_logo': os.path.exists(_LOGO_PATH),
+            'nav_isler': getattr(g, 'isler', []),
+            'nav_current_is': getattr(g, 'current_is', None)}
 
 
 @app.before_request
@@ -57,6 +65,10 @@ def _require_setup_or_login():
         return None
     if count_users() == 0:
         return redirect(url_for('kurulum'))
+    if session.get('user_id'):
+        g.isler, g.current_is = _resolve_current_is()
+    else:
+        g.isler, g.current_is = [], None
     return None
 
 # In-memory session store: Faz 1 is single-user/single-process, so this is
@@ -71,21 +83,82 @@ def _session_dir(session_id):
     return os.path.join(tempfile.gettempdir(), 'atasman-app-sessions', session_id)
 
 
-def _render_clusters(session_id, candidates, hakedis_no):
+def _my_isler():
+    """Oturumdaki kullanıcının çalışabileceği işler -- yönetici dahil HERKES
+    sadece kendine atanmış işleri görür (Personel sayfasındaki iş işaretleme
+    kutularıyla belirlenir). Bilinçli bir tercih: bu sistem başka firmalara
+    da satılacağı için bir firmanın yöneticisi otomatik olarak o firmanın
+    HER işini görmemeli -- hangi işleri kimin (kendisi dahil) yöneteceğine
+    yine kendisi karar veriyor. Yeni kurulan bir hesapta ilk yönetici tüm
+    işlere otomatik atanır (bkz. kurulum() ve db.py::init_db migration)."""
+    return get_user_isler(session['user_id'])
+
+
+def _resolve_current_is():
+    """Oturumdaki kullanıcının şu an hangi iş havuzunda çalıştığını belirler.
+    Ataşman üretim ekranındaki eski seçici kaldırıldı (per the user: farklı
+    işlerin sistemleri/havuzları -- hakediş numaraları, mahalle sayaçları,
+    birim fiyatlar -- birbirinden tamamen ayrı olmalı, ama bunu her dosya
+    yüklemede yeniden seçtirmek yerine, üst menüdeki iş değiştiriciden
+    seçilip oturumda hatırlanıyor). Tek işi olan personel için otomatik
+    seçilir, hiç bir şey seçilmemiş/geçersizse listenin ilk işi kullanılır."""
+    isler = _my_isler()
+    if not isler:
+        return isler, None
+    current_id = session.get('current_is_id')
+    current = next((i for i in isler if i['id'] == current_id), None)
+    if not current:
+        current = isler[0]
+        session['current_is_id'] = current['id']
+    return isler, current
+
+
+@app.post('/is-degistir')
+@auth.login_required
+def is_degistir():
+    """Üst menüdeki iş değiştirici -- kullanıcı birden fazla işe atanmışsa
+    şu an hangi işin havuzunda (hakediş numaraları, mahalle sayaçları, birim
+    fiyatlar) çalıştığını buradan değiştirir, bulunduğu sayfaya geri döner."""
+    is_id = request.form.get('is_id', type=int)
+    musait = {i['id']: i for i in _my_isler()}
+    secili = musait.get(is_id)
+    if secili:
+        session['current_is_id'] = secili['id']
+        flash(f'"{secili["ad"]}" işine geçtiniz.')
+    else:
+        flash('Bu işe erişiminiz yok.')
+    next_url = request.form.get('next') or url_for('panel')
+    return redirect(next_url)
+
+
+def _render_clusters(session_id, candidates, hakedis_no, radius=None):
     """candidates listesinden (yeniden inşa edilip onaylanmış parçalar dahil
     edilmiş haliyle) kümeleri hesaplar, oturuma kaydeder, küme ekranını
     döner -- hem /analyze (yeniden inşa önerisi yoksa direkt) hem de
-    /reconstruct (öneriler onaylandıktan sonra) tarafından kullanılır."""
+    /reconstruct (öneriler onaylandıktan sonra) hem de /regroup (kullanıcı
+    yakınlık mesafesini elle değiştirdiğinde) tarafından kullanılır.
+
+    `candidates` ve kullanılan `radius`, oturuma kaydediliyor (`sess['candidates']`,
+    `sess['cluster_radius']`) ki /regroup, dosyaları yeniden yükletmeden AYNI
+    parça listesini farklı bir mesafeyle yeniden kümeleyebilsin -- tek bir
+    sabit mesafenin her saha dosyası için doğru olamayacağı gerçek verilerle
+    doğrulandı (bkz. survey.py::CLUSTER_RADIUS_M yorumu), o yüzden kesin
+    cevap yerine değiştirilebilir bir ilk tahmin sunuluyor."""
+    if radius is None:
+        radius = CLUSTER_RADIUS_M
     sess = SESSIONS[session_id]
-    groups = describe_clusters(candidates, sess.get('bg_path'), sess.get('mahalle_dxf_path'))
+    groups = describe_clusters(candidates, sess.get('bg_path'), sess.get('mahalle_dxf_path'),
+                                radius=radius)
     if not groups:
         flash('Saha DXF\'inde tanınan hiçbir parke/bordür/oluk parçası bulunamadı '
               '(nokta dosyasındaki kodlarla saha DXF\'indeki kapalı çizgiler eşleşmedi).')
         return redirect(url_for('index'))
     sess['groups'] = groups
+    sess['candidates'] = candidates
+    sess['cluster_radius'] = radius
     return render_template('clusters.html', session_id=session_id, groups=groups,
                             hakedis_no=hakedis_no, templates=TEMPLATES, enumerate=enumerate,
-                            manual_piece_choices=MANUAL_PIECE_CHOICES)
+                            manual_piece_choices=MANUAL_PIECE_CHOICES, cluster_radius=radius)
 
 
 @app.route('/kurulum', methods=['GET', 'POST'])
@@ -97,6 +170,7 @@ def kurulum():
     if request.method == 'POST':
         ad_soyad = request.form.get('ad_soyad', '').strip()
         kullanici_adi = request.form.get('kullanici_adi', '').strip()
+        email = request.form.get('email', '').strip()
         sifre = request.form.get('sifre', '')
         sifre2 = request.form.get('sifre2', '')
         if not ad_soyad or not kullanici_adi or not sifre:
@@ -106,7 +180,13 @@ def kurulum():
         elif len(sifre) < 4:
             flash('Şifre en az 4 karakter olmalı.')
         else:
-            create_user(ad_soyad, kullanici_adi, auth.hash_password(sifre), 'yonetici')
+            yeni_id = create_user(ad_soyad, kullanici_adi, auth.hash_password(sifre), 'yonetici',
+                                   email=email)
+            # ilk yönetici, sistemi kurup henüz kimseye iş dağıtmamışken
+            # kilitli kalmasın diye baştan TÜM işlere atanır -- daha sonra
+            # Personel sayfasından kendi ve başkalarının atamalarını
+            # istediği gibi düzenleyebilir.
+            set_user_isler(yeni_id, [i['id'] for i in list_isler()])
             flash('Yönetici hesabınız oluşturuldu, şimdi giriş yapabilirsiniz.')
             return redirect(url_for('giris'))
     return render_template('kurulum.html')
@@ -147,26 +227,176 @@ def panel():
     return render_template('panel.html', is_admin=is_admin, own_stats=own_stats, per_user=per_user)
 
 
+@app.get('/hakkinda')
+@auth.login_required
+def hakkinda():
+    return render_template('hakkinda.html')
+
+
+@app.get('/yardim')
+@auth.login_required
+def yardim():
+    return render_template('yardim.html')
+
+
+def _sifre_baglantisi_gonder(kullanici, konu, govde_onsoz, gecerlilik_saat):
+    """create_password_token() + send_mail() ortak akışı -- hem yeni hesap
+    açılışında hem de şifre sıfırlama isteklerinde kullanılır. Mail
+    gönderilemezse (SMTP ayarlanmamışsa ya da sandbox/ağ engeli varsa)
+    işlemi durdurmuyoruz -- bağlantıyı doğrudan ekranda göstererek
+    yöneticinin elle iletebilmesini sağlıyoruz."""
+    token = create_password_token(kullanici['id'], gecerlilik_saat=gecerlilik_saat)
+    link = url_for('sifre_belirle', token=token, _external=True)
+    govde = (f"Merhaba {kullanici['ad_soyad']},\n\n{govde_onsoz}\n\n{link}\n\n"
+             f"Bu bağlantı {gecerlilik_saat} saat geçerlidir.")
+    try:
+        send_mail(kullanici['email'], konu, govde)
+        return True, link
+    except MailGonderilemedi as exc:
+        flash(f"Mail gönderilemedi ({exc}). Bağlantıyı kendiniz iletin: {link}")
+        return False, link
+
+
 @app.route('/personel', methods=['GET', 'POST'])
 @auth.admin_required
 def personel():
     if request.method == 'POST':
         ad_soyad = request.form.get('ad_soyad', '').strip()
         kullanici_adi = request.form.get('kullanici_adi', '').strip()
-        sifre = request.form.get('sifre', '')
+        email = request.form.get('email', '').strip()
         rol = request.form.get('rol', 'personel')
+        meslek = request.form.get('meslek', '').strip()
+        telefon = request.form.get('telefon', '').strip()
+        is_ids = [int(i) for i in request.form.getlist('is_ids') if i.isdigit()]
         if rol not in ('personel', 'yonetici'):
             rol = 'personel'
-        if not ad_soyad or not kullanici_adi or not sifre:
-            flash('Tüm alanları doldurmalısınız.')
-        elif len(sifre) < 4:
-            flash('Şifre en az 4 karakter olmalı.')
+        if not ad_soyad or not kullanici_adi or not email:
+            flash('Ad Soyad, kullanıcı adı ve e-posta zorunludur.')
         elif get_user_by_username(kullanici_adi):
             flash(f'"{kullanici_adi}" kullanıcı adı zaten alınmış, başka bir tane seçin.')
+        elif get_user_by_email(email):
+            flash(f'"{email}" e-postası zaten başka bir hesapta kayıtlı.')
         else:
-            create_user(ad_soyad, kullanici_adi, auth.hash_password(sifre), rol)
-            flash(f'{ad_soyad} için hesap oluşturuldu.')
-    return render_template('personel.html', users=list_users())
+            # Şifreyi yönetici belirlemiyor -- hesaba geçici, kullanılamaz bir
+            # şifre atanır, kişi kendi şifresini e-postasına gelen bağlantıdan
+            # kendisi belirler (bkz. core/mailer.py, /sifre-belirle).
+            gecici_hash = auth.hash_password(secrets.token_urlsafe(24))
+            yeni_id = create_user(ad_soyad, kullanici_adi, gecici_hash, rol,
+                                   meslek=meslek, telefon=telefon, email=email)
+            set_user_isler(yeni_id, is_ids)
+            kullanici = get_user_by_id(yeni_id)
+            basarili, link = _sifre_baglantisi_gonder(
+                kullanici, 'Ataşman Otomasyonu hesabınız oluşturuldu',
+                f"Ataşman Otomasyonu'nda sizin için bir hesap açıldı (kullanıcı adınız: "
+                f"{kullanici_adi}). Şifrenizi belirlemek için aşağıdaki bağlantıya tıklayın:",
+                gecerlilik_saat=72,
+            )
+            if basarili:
+                flash(f'{ad_soyad} için hesap oluşturuldu, şifre belirleme bağlantısı {email} adresine gönderildi.')
+            else:
+                flash(f'{ad_soyad} için hesap oluşturuldu.')
+    tum_isler = list_isler()
+    users = list_users()
+    for u in users:
+        u['is_ids'] = [i['id'] for i in get_user_isler(u['id'])]
+    return render_template('personel.html', users=users, isler=tum_isler)
+
+
+@app.post('/personel/<int:user_id>/guncelle')
+@auth.admin_required
+def personel_guncelle(user_id):
+    """Personel tablosundaki açılır panelden -- bir personelin (yönetici
+    dahil, kendisi dahil) meslek/telefon/e-posta bilgisi ve hangi işlerde
+    çalışabileceği sonradan değiştirilir. Kayıt oluşturulduktan sonra yeni
+    bir iş eklenip birine atanmak istendiğinde, ya da e-postası olmayan
+    eski bir hesaba e-posta eklenmesi gerektiğinde kullanılır."""
+    kullanici = get_user_by_id(user_id)
+    if not kullanici:
+        flash('Personel bulunamadı.')
+        return redirect(url_for('personel'))
+    meslek = request.form.get('meslek', '').strip()
+    telefon = request.form.get('telefon', '').strip()
+    email = request.form.get('email', '').strip()
+    is_ids = [int(i) for i in request.form.getlist('is_ids') if i.isdigit()]
+    if not email:
+        flash('E-posta zorunludur.')
+        return redirect(url_for('personel'))
+    mevcut = get_user_by_email(email)
+    if mevcut and mevcut['id'] != user_id:
+        flash(f'"{email}" e-postası zaten başka bir hesapta kayıtlı.')
+        return redirect(url_for('personel'))
+    update_user_info(user_id, meslek, telefon, email)
+    set_user_isler(user_id, is_ids)
+    flash(f'{kullanici["ad_soyad"]} için bilgiler güncellendi.')
+    return redirect(url_for('personel'))
+
+
+@app.post('/personel/<int:user_id>/sifre-sifirla')
+@auth.admin_required
+def personel_sifre_sifirla(user_id):
+    """Personel listesinden -- şifreyi görmeden, o kişiye yeni bir şifre
+    belirleme bağlantısı gönderir (bkz. üstteki açıklama: yönetici şifreyi
+    hiçbir zaman göremez/belirleyemez, sadece bu süreci başlatabilir)."""
+    kullanici = get_user_by_id(user_id)
+    if not kullanici:
+        flash('Personel bulunamadı.')
+        return redirect(url_for('personel'))
+    if not kullanici.get('email'):
+        flash(f'{kullanici["ad_soyad"]} için kayıtlı e-posta yok -- önce e-posta ekleyip kaydedin.')
+        return redirect(url_for('personel'))
+    basarili, link = _sifre_baglantisi_gonder(
+        kullanici, 'Ataşman Otomasyonu şifre sıfırlama',
+        "Şifrenizi sıfırlamak için aşağıdaki bağlantıya tıklayın. Bu isteği siz "
+        "yapmadıysanız yöneticinizle iletişime geçin.",
+        gecerlilik_saat=2,
+    )
+    if basarili:
+        flash(f'{kullanici["ad_soyad"]} için şifre sıfırlama bağlantısı {kullanici["email"]} adresine gönderildi.')
+    return redirect(url_for('personel'))
+
+
+@app.route('/sifre-belirle/<token>', methods=['GET', 'POST'])
+def sifre_belirle(token):
+    """Hem yeni hesap açılışında hem de şifre sıfırlamada kullanılan aynı
+    sayfa -- geçerli bir token'sız (süresi dolmuş/kullanılmış/uydurma)
+    buraya girilemez."""
+    kayit = get_password_token(token)
+    if not kayit:
+        flash('Bu bağlantının süresi dolmuş ya da daha önce kullanılmış. Yeni bir bağlantı isteyin.')
+        return redirect(url_for('sifre_unuttum'))
+    if request.method == 'POST':
+        sifre = request.form.get('sifre', '')
+        sifre2 = request.form.get('sifre2', '')
+        if sifre != sifre2:
+            flash('Girdiğiniz iki şifre birbiriyle uyuşmuyor.')
+        elif len(sifre) < 4:
+            flash('Şifre en az 4 karakter olmalı.')
+        else:
+            set_user_password(kayit['kullanici_id'], auth.hash_password(sifre))
+            kullan_password_token(token)
+            flash('Şifreniz belirlendi, şimdi giriş yapabilirsiniz.')
+            return redirect(url_for('giris'))
+    return render_template('sifre_belirle.html', ad_soyad=kayit['ad_soyad'])
+
+
+@app.route('/sifre-unuttum', methods=['GET', 'POST'])
+def sifre_unuttum():
+    """Personelin kendi kendine şifre sıfırlama isteği -- hangi kullanıcı
+    adı/e-postanın var olup olmadığını ele vermemek için sonuç her zaman
+    aynı genel mesajı gösterir."""
+    if request.method == 'POST':
+        girilen = request.form.get('kullanici_adi_veya_email', '').strip()
+        kullanici = get_user_by_username(girilen) or get_user_by_email(girilen)
+        if kullanici and kullanici.get('email'):
+            _sifre_baglantisi_gonder(
+                kullanici, 'Ataşman Otomasyonu şifre sıfırlama',
+                "Şifrenizi sıfırlamak için aşağıdaki bağlantıya tıklayın. Bu isteği siz "
+                "yapmadıysanız bu maili yok sayabilirsiniz.",
+                gecerlilik_saat=2,
+            )
+        flash('Hesabınıza kayıtlı bir e-posta varsa, şifre sıfırlama bağlantısı gönderildi.')
+        return redirect(url_for('giris'))
+    return render_template('sifre_unuttum.html')
 
 
 @app.get('/')
@@ -184,6 +414,20 @@ def analyze():
     saha_file = request.files.get('saha_dxf')
     bg_file = request.files.get('background_dxf')
 
+    # Hangi iş (proje) için üretim yapılıyor -- artık bu ekranda ayrıca
+    # sorulmuyor, üst menüdeki iş değiştiriciden seçilip oturumda hatırlanan
+    # (g.current_is, bkz. _resolve_current_is) iş kullanılıyor. Personel
+    # sadece kendine atanmış işleri seçebiliyor zaten (o iş değiştiricide
+    # bile görünmüyor), burada yine de savunma amaçlı kontrol ediliyor.
+    secili_is = g.current_is
+    if not secili_is:
+        flash('Hiçbir işe atanmamışsınız. Yöneticinizden sizi bir işe atamasını isteyin.')
+        return redirect(url_for('index'))
+    if not secili_is['aktif']:
+        flash(f'"{secili_is["ad"]}" için ataşman üretimi henüz sisteme eklenmedi -- '
+              f'yakında entegre edilecek. Üst menüdeki iş değiştiriciden aktif bir işe geçebilirsiniz.')
+        return redirect(url_for('index'))
+
     if not hakedis_no:
         flash('Hangi hakedişte olduğunuzu girmelisiniz.')
         return redirect(url_for('index'))
@@ -195,9 +439,10 @@ def analyze():
     # sadece nokta dosyasından, kodu olup hiç kullanılmayan noktaları
     # bulup kullanıcıya "bunları birleştireyim mi" diye soruyoruz (aşağıda).
 
-    # bir sonraki dosya yüklemesinde bu hakediş no'yu tekrar hatırlat --
-    # kullanıcı hakediş değiştirene kadar her seferinde yeniden yazmasın.
+    # bir sonraki dosya yüklemesinde bu hakediş no'yu ve seçili işi tekrar
+    # hatırlat -- kullanıcı değiştirene kadar her seferinde yeniden seçmesin.
     session['current_hakedis_no'] = hakedis_no
+    session['current_is_id'] = secili_is['id']
 
     session_id = uuid.uuid4().hex
     sdir = _session_dir(session_id)
@@ -227,7 +472,7 @@ def analyze():
 
     SESSIONS[session_id] = {
         'ncn_path': ncn_path, 'saha_path': saha_path, 'bg_path': bg_path,
-        'mahalle_dxf_path': mahalle_dxf_path, 'hakedis_no': hakedis_no,
+        'mahalle_dxf_path': mahalle_dxf_path, 'hakedis_no': hakedis_no, 'is_id': secili_is['id'],
         'base_candidates': candidates, 'pts': pts,
     }
 
@@ -277,6 +522,31 @@ def reconstruct():
     return result
 
 
+@app.post('/regroup')
+@auth.login_required
+def regroup():
+    """Kullanıcı, tespit ekranındaki otomatik gruplamanın yanlış olduğunu
+    (birbirinden farklı işleri tek ataşmanda birleştirdiğini, ya da tek bir
+    işi gereksiz yere parçaladığını) düşünürse, dosyaları yeniden yüklemeden,
+    AYNI parça listesini farklı bir yakınlık mesafesiyle yeniden kümelemesini
+    sağlar -- tek bir sabit mesafenin her saha dosyası için doğru
+    olamayacağı gerçek verilerle doğrulandı (bkz. survey.py::CLUSTER_RADIUS_M)."""
+    session_id = request.form.get('session_id')
+    sess = SESSIONS.get(session_id)
+    if not sess or 'candidates' not in sess:
+        flash('Oturum süresi doldu, dosyaları tekrar yükleyin.')
+        return redirect(url_for('index'))
+    try:
+        radius = float(request.form.get('cluster_radius', '').replace(',', '.'))
+        if radius <= 0:
+            raise ValueError
+    except ValueError:
+        flash('Yakınlık mesafesi pozitif bir sayı olmalı (örn. 60).')
+        return _render_clusters(session_id, sess['candidates'], sess['hakedis_no'],
+                                 radius=sess.get('cluster_radius'))
+    return _render_clusters(session_id, sess['candidates'], sess['hakedis_no'], radius=radius)
+
+
 @app.post('/generate')
 @auth.login_required
 def generate():
@@ -300,6 +570,14 @@ def generate():
         if not cand.get('unclassified'):
             continue
         choice = request.form.get(f'piece_type_{idx}', 'skip')
+        if choice == 'keep':
+            # kullanıcı, koddan otomatik tespit edilen bordür/oluk kırılımının
+            # (review_reason='full_bordur_no_parke') doğru olduğunu onayladı --
+            # piece_bordur zaten hesaplanmış haliyle kalıyor, sadece onay
+            # ekranına tekrar düşmesin diye işaretleniyor.
+            cand['unclassified'] = False
+            cand['review_reason'] = None
+            continue
         if choice == 'skip' or ':' not in choice:
             continue
         choice_key, choice_kind = choice.split(':', 1)
@@ -339,7 +617,7 @@ def generate():
         save_atasman(inp.hakedis_no, inp.sira_no, inp.mahalle, inp.cadde_sokak,
                      inp.aykome_no, result['totals_net'],
                      kapi_no=request.form.get('kapi_no', '').strip(),
-                     kullanici_id=session.get('user_id'))
+                     kullanici_id=session.get('user_id'), is_id=sess.get('is_id'))
     except Exception as exc:
         flash(f"DXF üretildi, ama İcmal kaydı tutulamadı: {exc}")
 
@@ -354,7 +632,8 @@ def generate():
     # -- NetCAD'in "Adı" alanı DXF ile yazılamadığı için bu kodlar çizime
     # değil, bu sonuç ekranına yazılıyor; kullanıcı NetCAD'de elle giriyor.
     try:
-        item_codes = allocate_item_codes(inp.hakedis_no, inp.mahalle, result.get('item_codes', {}))
+        item_codes = allocate_item_codes(inp.hakedis_no, inp.mahalle, result.get('item_codes', {}),
+                                          is_id=sess.get('is_id'))
     except Exception as exc:
         item_codes = {}
         flash(f"Malzeme kalemi kodları atanamadı: {exc}")
@@ -382,12 +661,16 @@ def indir_dosya():
 @app.get('/icmal')
 @auth.login_required
 def icmal_index():
-    # Personel sadece kendi ürettiği ataşmanları görür; Yönetici hepsini.
+    # Her iş kendi hakediş/kayıt havuzunu tutar -- üst menüde şu an seçili
+    # olan işin (g.current_is) dışındaki kayıtlar hiç görünmez. Personel
+    # ayrıca sadece kendi ürettiği ataşmanları görür; Yönetici hepsini.
     own_id = None if auth.is_admin() else session['user_id']
     hakedis_no = request.args.get('hakedis_no', '').strip()
-    hakedis_list = list_hakedis_numbers()
-    records = get_records(hakedis_no, kullanici_id=own_id) if hakedis_no else []
-    unit_prices = get_unit_prices()
+    current_is = g.current_is
+    hakedis_list = list_hakedis_numbers(current_is['id']) if current_is else []
+    records = get_records(hakedis_no, current_is['id'], kullanici_id=own_id) \
+        if hakedis_no and current_is else []
+    unit_prices = get_unit_prices(current_is['id']) if current_is else {}
     return render_template('icmal.html', hakedis_list=hakedis_list, hakedis_no=hakedis_no,
                             records=records, unit_prices=unit_prices, t_keys=T_KEYS)
 
@@ -395,6 +678,9 @@ def icmal_index():
 @app.post('/icmal/birim-fiyat')
 @auth.admin_required
 def icmal_birim_fiyat():
+    if not g.current_is:
+        flash('Birim fiyat güncellemek için önce bir işe atanmış olmalısınız.')
+        return redirect(url_for('icmal_index'))
     prices = {}
     for k in T_KEYS:
         v = request.form.get(f'fiyat_{k}', '').strip()
@@ -403,7 +689,7 @@ def icmal_birim_fiyat():
                 prices[k] = float(v.replace(',', '.'))
             except ValueError:
                 pass
-    set_unit_prices(prices)
+    set_unit_prices(g.current_is['id'], prices)
     flash('Birim fiyatlar güncellendi.')
     return redirect(url_for('icmal_index', hakedis_no=request.form.get('hakedis_no', '')))
 
@@ -426,11 +712,14 @@ def icmal_indir():
     if not hakedis_no:
         flash('Hakediş no seçmelisiniz.')
         return redirect(url_for('icmal_index'))
-    records = get_records(hakedis_no)
+    if not g.current_is:
+        flash('İndirmek için önce bir işe atanmış olmalısınız.')
+        return redirect(url_for('icmal_index'))
+    records = get_records(hakedis_no, g.current_is['id'])
     if not records:
         flash(f"{hakedis_no} nolu hakedişte kayıtlı ataşman yok.")
         return redirect(url_for('icmal_index'))
-    unit_prices = get_unit_prices()
+    unit_prices = get_unit_prices(g.current_is['id'])
     wb = build_icmal_workbook(hakedis_no, records, unit_prices)
     sdir = os.path.join(tempfile.gettempdir(), 'atasman-app-sessions')
     os.makedirs(sdir, exist_ok=True)
