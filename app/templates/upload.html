@@ -15,9 +15,9 @@
       <input type="file" id="ncn" name="ncn" accept=".ncn,.txt" required>
       <p class="hint">Stonex/Singular'dan alınan, "id id Y X Z 0 &quot;kod&quot; &quot;&quot; &quot;&quot;" formatındaki dosya.</p>
 
-      <label for="saha_dxf">Saha DXF'i</label>
-      <input type="file" id="saha_dxf" name="saha_dxf" accept=".dxf" required>
-      <p class="hint">NetCAD'de nokta dosyasından üretilen alan/çizgi DXF'i. Tek bir günün/bölgenin tamamı olabilir — sistem içindeki farklı işleri kendisi ayıracak.</p>
+      <label for="saha_dxf">Saha DXF'i (opsiyonel)</label>
+      <input type="file" id="saha_dxf" name="saha_dxf" accept=".dxf">
+      <p class="hint">NetCAD'de nokta dosyasından üretilen alan/çizgi DXF'i. Tek bir günün/bölgenin tamamı olabilir — sistem içindeki farklı işleri kendisi ayıracak. Bu adım hiç yapılmamışsa (sahada sadece kodlu nokta ölçümü kaldıysa) boş bırakabilirsiniz — sistem kodu olup çizgisi çizilmemiş noktaları bulup size hangilerini birleştireceğini soracak.</p>
 
       <label for="background_dxf">İmar planı altlığı (opsiyonel)</label>
       <input type="file" id="background_dxf" name="background_dxf" accept=".dxf">
@@ -29,11 +29,13 @@
 
   <div class="panel">
     <h3 style="margin-top:0">Ortak nokta kod tablosu</h3>
+    <div class="table-scroll">
     <table>
       <tr><th>Kod</th><th>Açıklama</th><th>Ataşman kalemi</th></tr>
       {% for row in point_codes %}
       <tr><td><code>{{ row.kod }}</code></td><td>{{ row.aciklama }}</td><td>{{ row.kalem }}</td></tr>
       {% endfor %}
     </table>
+    </div>
   </div>
 {% endblock %}

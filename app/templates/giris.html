@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block content %}
+  <h1>Giriş Yap</h1>
+  <p class="sub">Ataşman Otomasyonu'na devam etmek için kullanıcı adınız ve şifrenizle giriş yapın.</p>
+
+  <div class="panel" style="max-width:380px">
+    <form action="{{ url_for('giris') }}" method="post">
+      <input type="hidden" name="next" value="{{ next_url or '' }}">
+      <label for="kullanici_adi">Kullanıcı adı</label>
+      <input type="text" id="kullanici_adi" name="kullanici_adi" required autofocus>
+
+      <label for="sifre">Şifre</label>
+      <input type="password" id="sifre" name="sifre" required>
+
+      <div style="margin-top:20px"><button type="submit">Giriş Yap</button></div>
+    </form>
+  </div>
+
+  <div class="panel" style="max-width:380px">
+    <h3 style="margin-top:0; font-size:.95rem">Nordgis Mühendislik</h3>
+    <p class="meta" style="margin:0 0 4px">Feritpaşa Mahallesi Malazgirt Sokak No:13/401, Selçuklu/Konya</p>
+    <p class="meta" style="margin:0 0 4px">Yetkili: Kasım ERDAL &middot; Tel: 0531 379 96 55</p>
+    <p class="meta" style="margin:0">
+      <a href="https://www.nordgismuhendislik.com" target="_blank" rel="noopener">nordgismuhendislik.com</a>
+    </p>
+    <p class="hint" style="margin-top:10px">
+      Bu yazılım Nordgis Mühendislik'e özeldir. Hesabınız yoksa veya erişim talebiniz varsa
+      yukarıdaki bilgilerden bizimle iletişime geçin.
+    </p>
+  </div>
+{% endblock %}

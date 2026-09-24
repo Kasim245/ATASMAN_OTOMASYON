@@ -115,6 +115,20 @@ PREFIX_LABELS = {
     'YB': 'Yeni Bordür', 'O': 'Oluk Taşı', 'KP': 'Küp Parke', 'M': 'Minha',
 }
 
+# sahada kod girilmemiş (veya bilinmeyen bir kod girilmiş) bir parça
+# bulunduğunda kullanıcıya sorulan seçenekler -- (kalem, tür, açıklama).
+# 'area' seçilirse tüm poligon alanı o kaleme (T7/T6/T3) yazılır; 'length'
+# seçilirse -- hangi kenarın bordür/oluk olduğu koddan bilinemediği için --
+# poligonun tüm çevresi, kenar kenar, o kaleme (T5/T4/T8) yazılır.
+MANUAL_PIECE_CHOICES = [
+    ('T7', 'area', 'Eski (yerinde) parke'),
+    ('T6', 'area', 'Yeni (idareden) parke'),
+    ('T3', 'area', 'Küp taşı'),
+    ('T5', 'length', 'Eski (yerinde) bordür (parçanın tüm çevresi)'),
+    ('T4', 'length', 'Yeni (idareden) bordür (parçanın tüm çevresi)'),
+    ('T8', 'length', 'Oluk taşı (parçanın tüm çevresi)'),
+]
+
 LAYER_TO_KEY = {
     'T_1_ANDEZİT_4CM': 'T1', 'T_2_ANDEZİT_6CM': 'T2', 'T_3_KÜP_PARKE': 'T3',
     'T_4_İDRDN_BORDÜR': 'T4', 'T_5_YERİNDE_BORDÜR': 'T5', 'T_6_İDAREDEN_KLTPRK': 'T6',

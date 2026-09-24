@@ -47,6 +47,28 @@ def classify_polygon(vertex_ids, pts):
     return parke_key, minha, cnt
 
 
+def find_orphan_runs(pts, consumed_ids):
+    """Kodu olup saha DXF'inde hiçbir çizgide kullanılmamış (consumed_ids'te
+    olmayan) nokta id'lerini bulur, sahada genelde bir şeklin etrafında
+    sırayla numaralandıkları varsayımıyla ARDIŞIK numaralara göre gruplar
+    (örn. 1,2,3...15 -> tek bir grup; sonra 20,21..28 -> ayrı bir grup).
+    Kodu tamamen boş VE hiç kullanılmamış noktalar (muhtemelen ilgisiz/
+    referans noktalar) bu gruplamaya dahil edilmez. En az 3 noktası olmayan
+    bir grup kapalı bir şekil oluşturamayacağı için elenir."""
+    orphan_ids = sorted(i for i, (x, y, z, code) in pts.items()
+                         if i not in consumed_ids and code)
+    runs = []
+    cur = []
+    for i in orphan_ids:
+        if cur and i != cur[-1] + 1:
+            runs.append(cur)
+            cur = []
+        cur.append(i)
+    if cur:
+        runs.append(cur)
+    return [r for r in runs if len(r) >= 3]
+
+
 def find_bordur_edges(vertex_ids, pts, target_codes):
     """Consecutive-vertex runs (in original polyline order) sharing the same
     bordur/oluk code -> one (p1, p2, code) edge per such run."""

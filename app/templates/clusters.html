@@ -23,6 +23,28 @@
       <input type="hidden" name="group_idx" value="{{ loop.index0 }}">
       <input type="hidden" name="template_scale" value="{{ group.suggested_scale or '' }}">
 
+      {% if group.unclassified_count %}
+      <div class="warning-box">
+        <p><strong>⚠ {{ group.unclassified_count }} parçanın kodu tanınamadı</strong>
+          (nokta kodu boş bırakılmış ya da bilinmeyen bir kod girilmiş). Ataşmanı üretmeden
+          önce, aşağıdaki parça(lar)ın ne olduğunu seçin:</p>
+        {% for candidate in group.candidates %}
+          {% if candidate.unclassified %}
+          <div class="unclassified-piece">
+            <label>Kodsuz parça (~{{ '%.1f'|format(candidate.area) }} m² alanlı kapalı şekil, sahada X={{ '%.0f'|format(candidate.cx) }} Y={{ '%.0f'|format(candidate.cy) }} civarında)</label>
+            <select name="piece_type_{{ loop.index0 }}" required>
+              <option value="" disabled selected>-- Seçiniz --</option>
+              {% for key, kind, label in manual_piece_choices %}
+              <option value="{{ key }}:{{ kind }}">{{ label }}</option>
+              {% endfor %}
+              <option value="skip">Bu parçayı atla (dikkate alma)</option>
+            </select>
+          </div>
+          {% endif %}
+        {% endfor %}
+      </div>
+      {% endif %}
+
       <label>Mahalle</label>
       <input type="text" name="mahalle" value="{{ group.suggested_mahalle or '' }}" required>
 

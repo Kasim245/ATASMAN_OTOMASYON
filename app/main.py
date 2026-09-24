@@ -14,19 +14,50 @@ import uuid
 
 from flask import Flask, render_template, request, send_file, redirect, url_for, flash, session
 
-from .core.survey import parse_survey_candidates, describe_clusters
+from .core.survey import (
+    parse_survey_candidates, describe_clusters, classify_unclassified_piece,
+    build_reconstruction_suggestions,
+)
+from .core.preview import render_run_preview_svg
 from .core.generator import AtasmanInput, generate_atasman
-from .core.config import TEMPLATES, POINT_CODE_TABLE, MAHALLE_DXF_PATH, PREFIX_LABELS
+from .core.config import (
+    TEMPLATES, POINT_CODE_TABLE, MAHALLE_DXF_PATH, PREFIX_LABELS, MANUAL_PIECE_CHOICES,
+)
 from .core.db import (
     init_db, save_atasman, list_hakedis_numbers, get_records,
     get_unit_prices, set_unit_prices, delete_record, T_KEYS,
-    allocate_item_codes,
+    allocate_item_codes, count_users, create_user, get_user_by_username,
+    list_users, user_atasman_stats, per_user_atasman_counts,
 )
 from .core.icmal_xlsx import build_icmal_workbook
+from .core import auth
 
 app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY', 'dev-only-change-me')
 init_db()
+
+_LOGO_PATH = os.path.join(app.static_folder, 'logo.png')
+
+
+@app.context_processor
+def _inject_branding():
+    # kullanıcı kendi logosunu app/static/logo.png olarak eklediğinde başlıkta
+    # otomatik görünür -- dosya yoksa sadece yazı gösterilir, kırık resim
+    # ikonu çıkmaz.
+    return {'has_logo': os.path.exists(_LOGO_PATH)}
+
+
+@app.before_request
+def _require_setup_or_login():
+    """Sistemde hiç kullanıcı yoksa (ilk çalıştırma), her istek /kurulum'a
+    yönlendirilir -- ilk Yönetici hesabı oluşturulana kadar başka hiçbir
+    sayfa açılamaz. Kurulum bittikten sonra bu kontrol hep False döner ve
+    normal @auth.login_required kontrolleri devreye girer."""
+    if request.endpoint in ('kurulum', 'static'):
+        return None
+    if count_users() == 0:
+        return redirect(url_for('kurulum'))
+    return None
 
 # In-memory session store: Faz 1 is single-user/single-process, so this is
 # fine. Faz 2 (çok kullanıcılı) replaces this with the real database. The
@@ -40,13 +71,113 @@ def _session_dir(session_id):
     return os.path.join(tempfile.gettempdir(), 'atasman-app-sessions', session_id)
 
 
+def _render_clusters(session_id, candidates, hakedis_no):
+    """candidates listesinden (yeniden inşa edilip onaylanmış parçalar dahil
+    edilmiş haliyle) kümeleri hesaplar, oturuma kaydeder, küme ekranını
+    döner -- hem /analyze (yeniden inşa önerisi yoksa direkt) hem de
+    /reconstruct (öneriler onaylandıktan sonra) tarafından kullanılır."""
+    sess = SESSIONS[session_id]
+    groups = describe_clusters(candidates, sess.get('bg_path'), sess.get('mahalle_dxf_path'))
+    if not groups:
+        flash('Saha DXF\'inde tanınan hiçbir parke/bordür/oluk parçası bulunamadı '
+              '(nokta dosyasındaki kodlarla saha DXF\'indeki kapalı çizgiler eşleşmedi).')
+        return redirect(url_for('index'))
+    sess['groups'] = groups
+    return render_template('clusters.html', session_id=session_id, groups=groups,
+                            hakedis_no=hakedis_no, templates=TEMPLATES, enumerate=enumerate,
+                            manual_piece_choices=MANUAL_PIECE_CHOICES)
+
+
+@app.route('/kurulum', methods=['GET', 'POST'])
+def kurulum():
+    # count_users() > 0 olduktan sonra bu sayfa artık kullanılamaz -- ilk
+    # Yönetici hesabı bir kere oluşturulur, sonrası /personel'den yönetilir.
+    if count_users() > 0:
+        return redirect(url_for('giris'))
+    if request.method == 'POST':
+        ad_soyad = request.form.get('ad_soyad', '').strip()
+        kullanici_adi = request.form.get('kullanici_adi', '').strip()
+        sifre = request.form.get('sifre', '')
+        sifre2 = request.form.get('sifre2', '')
+        if not ad_soyad or not kullanici_adi or not sifre:
+            flash('Tüm alanları doldurmalısınız.')
+        elif sifre != sifre2:
+            flash('Girdiğiniz iki şifre birbiriyle uyuşmuyor.')
+        elif len(sifre) < 4:
+            flash('Şifre en az 4 karakter olmalı.')
+        else:
+            create_user(ad_soyad, kullanici_adi, auth.hash_password(sifre), 'yonetici')
+            flash('Yönetici hesabınız oluşturuldu, şimdi giriş yapabilirsiniz.')
+            return redirect(url_for('giris'))
+    return render_template('kurulum.html')
+
+
+@app.route('/giris', methods=['GET', 'POST'])
+def giris():
+    if session.get('user_id'):
+        return redirect(url_for('panel'))
+    next_url = request.values.get('next') or url_for('panel')
+    if request.method == 'POST':
+        kullanici_adi = request.form.get('kullanici_adi', '').strip()
+        sifre = request.form.get('sifre', '')
+        user = get_user_by_username(kullanici_adi) if kullanici_adi else None
+        if not user or not auth.verify_password(user['sifre_hash'], sifre):
+            flash('Kullanıcı adı veya şifre hatalı.')
+        else:
+            session['user_id'] = user['id']
+            session['ad_soyad'] = user['ad_soyad']
+            session['rol'] = user['rol']
+            return redirect(request.form.get('next') or url_for('panel'))
+    return render_template('giris.html', next_url=next_url)
+
+
+@app.get('/cikis')
+def cikis():
+    session.clear()
+    flash('Çıkış yapıldı.')
+    return redirect(url_for('giris'))
+
+
+@app.get('/panel')
+@auth.login_required
+def panel():
+    is_admin = auth.is_admin()
+    own_stats = user_atasman_stats(None if is_admin else session['user_id'])
+    per_user = per_user_atasman_counts() if is_admin else None
+    return render_template('panel.html', is_admin=is_admin, own_stats=own_stats, per_user=per_user)
+
+
+@app.route('/personel', methods=['GET', 'POST'])
+@auth.admin_required
+def personel():
+    if request.method == 'POST':
+        ad_soyad = request.form.get('ad_soyad', '').strip()
+        kullanici_adi = request.form.get('kullanici_adi', '').strip()
+        sifre = request.form.get('sifre', '')
+        rol = request.form.get('rol', 'personel')
+        if rol not in ('personel', 'yonetici'):
+            rol = 'personel'
+        if not ad_soyad or not kullanici_adi or not sifre:
+            flash('Tüm alanları doldurmalısınız.')
+        elif len(sifre) < 4:
+            flash('Şifre en az 4 karakter olmalı.')
+        elif get_user_by_username(kullanici_adi):
+            flash(f'"{kullanici_adi}" kullanıcı adı zaten alınmış, başka bir tane seçin.')
+        else:
+            create_user(ad_soyad, kullanici_adi, auth.hash_password(sifre), rol)
+            flash(f'{ad_soyad} için hesap oluşturuldu.')
+    return render_template('personel.html', users=list_users())
+
+
 @app.get('/')
+@auth.login_required
 def index():
     return render_template('upload.html', templates=TEMPLATES, point_codes=POINT_CODE_TABLE,
                             current_hakedis_no=session.get('current_hakedis_no', ''))
 
 
 @app.post('/analyze')
+@auth.login_required
 def analyze():
     hakedis_no = request.form.get('hakedis_no', '').strip()
     ncn_file = request.files.get('ncn')
@@ -59,9 +190,10 @@ def analyze():
     if not ncn_file or not ncn_file.filename:
         flash('Nokta dosyası (.ncn) seçmelisiniz.')
         return redirect(url_for('index'))
-    if not saha_file or not saha_file.filename:
-        flash('Saha DXF dosyası seçmelisiniz.')
-        return redirect(url_for('index'))
+    # saha_dxf artık ZORUNLU DEĞİL: bazen sahada noktalar kodlarıyla
+    # ölçülmüş ama NetCAD'de hiç alan/çizgi çizilmemiş oluyor -- bu durumda
+    # sadece nokta dosyasından, kodu olup hiç kullanılmayan noktaları
+    # bulup kullanıcıya "bunları birleştireyim mi" diye soruyoruz (aşağıda).
 
     # bir sonraki dosya yüklemesinde bu hakediş no'yu tekrar hatırlat --
     # kullanıcı hakediş değiştirene kadar her seferinde yeniden yazmasın.
@@ -72,9 +204,12 @@ def analyze():
     os.makedirs(sdir, exist_ok=True)
 
     ncn_path = os.path.join(sdir, 'points.ncn')
-    saha_path = os.path.join(sdir, 'saha.dxf')
     ncn_file.save(ncn_path)
-    saha_file.save(saha_path)
+
+    saha_path = None
+    if saha_file and saha_file.filename:
+        saha_path = os.path.join(sdir, 'saha.dxf')
+        saha_file.save(saha_path)
 
     bg_path = None
     if bg_file and bg_file.filename:
@@ -83,28 +218,67 @@ def analyze():
 
     mahalle_dxf_path = MAHALLE_DXF_PATH if os.path.exists(MAHALLE_DXF_PATH) else None
     try:
-        candidates = parse_survey_candidates(ncn_path, saha_path)
-        groups = describe_clusters(candidates, bg_path, mahalle_dxf_path)
+        candidates, pts, consumed_ids = parse_survey_candidates(ncn_path, saha_path)
+        suggestions = build_reconstruction_suggestions(pts, consumed_ids)
     except Exception as exc:
         shutil.rmtree(sdir, ignore_errors=True)
         flash(f"Dosyalar okunurken hata oluştu: {exc}")
         return redirect(url_for('index'))
 
-    if not groups:
-        shutil.rmtree(sdir, ignore_errors=True)
-        flash('Saha DXF\'inde tanınan hiçbir parke/bordür/oluk parçası bulunamadı '
-              '(nokta dosyasındaki kodlarla saha DXF\'indeki kapalı çizgiler eşleşmedi).')
-        return redirect(url_for('index'))
-
     SESSIONS[session_id] = {
         'ncn_path': ncn_path, 'saha_path': saha_path, 'bg_path': bg_path,
-        'groups': groups, 'hakedis_no': hakedis_no,
+        'mahalle_dxf_path': mahalle_dxf_path, 'hakedis_no': hakedis_no,
+        'base_candidates': candidates, 'pts': pts,
     }
-    return render_template('clusters.html', session_id=session_id, groups=groups,
-                            hakedis_no=hakedis_no, templates=TEMPLATES, enumerate=enumerate)
+
+    if suggestions:
+        # kodu var ama hiç çizgisi çizilmemiş nokta grupları bulundu --
+        # önce kullanıcıya görsel önizleme + onay/atla sorusu gösteriyoruz,
+        # kümeleme ancak bundan sonra yapılıyor (bkz. /reconstruct).
+        SESSIONS[session_id]['pending_suggestions'] = suggestions
+        previews = [render_run_preview_svg(s['ids'], pts) for s in suggestions]
+        return render_template('reconstruct.html', session_id=session_id,
+                                hakedis_no=hakedis_no,
+                                suggestions=suggestions, previews=previews,
+                                manual_piece_choices=MANUAL_PIECE_CHOICES,
+                                enumerate=enumerate, zip=zip)
+
+    result = _render_clusters(session_id, candidates, hakedis_no)
+    if not SESSIONS[session_id].get('groups'):
+        shutil.rmtree(sdir, ignore_errors=True)
+        SESSIONS.pop(session_id, None)
+    return result
+
+
+@app.post('/reconstruct')
+@auth.login_required
+def reconstruct():
+    """Kullanıcı, kodu var ama saha DXF'inde hiç çizgisi olmayan nokta
+    gruplarından hangilerini "evet, bunları birleştir" dediğini bildirdikten
+    sonra (bkz. reconstruct.html), onaylananları normal candidates listesine
+    katıp küme ekranına geçer. Onaylanmayanlar sessizce dışarıda kalır --
+    başka bir şeyi bozmaz, sadece kullanılmamış nokta olarak kalırlar."""
+    session_id = request.form.get('session_id')
+    sess = SESSIONS.get(session_id)
+    if not sess or 'pending_suggestions' not in sess:
+        flash('Oturum süresi doldu, dosyaları tekrar yükleyin.')
+        return redirect(url_for('index'))
+
+    confirmed = []
+    for idx, s in enumerate(sess['pending_suggestions']):
+        if request.form.get(f'confirm_{idx}'):
+            confirmed.append(s['candidate'])
+
+    merged = sess['base_candidates'] + confirmed
+    result = _render_clusters(session_id, merged, sess['hakedis_no'])
+    if not sess.get('groups'):
+        shutil.rmtree(_session_dir(session_id), ignore_errors=True)
+        SESSIONS.pop(session_id, None)
+    return result
 
 
 @app.post('/generate')
+@auth.login_required
 def generate():
     session_id = request.form.get('session_id')
     sess = SESSIONS.get(session_id)
@@ -118,6 +292,18 @@ def generate():
     except (TypeError, ValueError, IndexError):
         flash('Geçersiz seçim.')
         return redirect(url_for('index'))
+
+    # kodu tanınmayan parçalar için kullanıcının bu formda seçtiği türü
+    # (parke/bordür/oluk/atla) uygula -- generate_atasman çağrılmadan önce,
+    # aday hala 'unclassified' ise ne olduğunu öğrenmiş oluyoruz.
+    for idx, cand in enumerate(group['candidates']):
+        if not cand.get('unclassified'):
+            continue
+        choice = request.form.get(f'piece_type_{idx}', 'skip')
+        if choice == 'skip' or ':' not in choice:
+            continue
+        choice_key, choice_kind = choice.split(':', 1)
+        classify_unclassified_piece(cand, choice_key, choice_kind)
 
     template_scale = request.form.get('template_scale') or group.get('suggested_scale')
     if template_scale not in TEMPLATES:
@@ -152,7 +338,8 @@ def generate():
         # doldu, ayrıca ayrı bir Minha toplamı gösteriyor.
         save_atasman(inp.hakedis_no, inp.sira_no, inp.mahalle, inp.cadde_sokak,
                      inp.aykome_no, result['totals_net'],
-                     kapi_no=request.form.get('kapi_no', '').strip())
+                     kapi_no=request.form.get('kapi_no', '').strip(),
+                     kullanici_id=session.get('user_id'))
     except Exception as exc:
         flash(f"DXF üretildi, ama İcmal kaydı tutulamadı: {exc}")
 
@@ -180,6 +367,7 @@ def generate():
 
 
 @app.get('/indir')
+@auth.login_required
 def indir_dosya():
     session_id = request.args.get('session_id', '')
     dosya = os.path.basename(request.args.get('dosya', ''))
@@ -192,16 +380,20 @@ def indir_dosya():
 
 
 @app.get('/icmal')
+@auth.login_required
 def icmal_index():
+    # Personel sadece kendi ürettiği ataşmanları görür; Yönetici hepsini.
+    own_id = None if auth.is_admin() else session['user_id']
     hakedis_no = request.args.get('hakedis_no', '').strip()
     hakedis_list = list_hakedis_numbers()
-    records = get_records(hakedis_no) if hakedis_no else []
+    records = get_records(hakedis_no, kullanici_id=own_id) if hakedis_no else []
     unit_prices = get_unit_prices()
     return render_template('icmal.html', hakedis_list=hakedis_list, hakedis_no=hakedis_no,
                             records=records, unit_prices=unit_prices, t_keys=T_KEYS)
 
 
 @app.post('/icmal/birim-fiyat')
+@auth.admin_required
 def icmal_birim_fiyat():
     prices = {}
     for k in T_KEYS:
@@ -217,6 +409,7 @@ def icmal_birim_fiyat():
 
 
 @app.post('/icmal/sil')
+@auth.admin_required
 def icmal_sil():
     record_id = request.form.get('record_id')
     hakedis_no = request.form.get('hakedis_no', '')
@@ -227,6 +420,7 @@ def icmal_sil():
 
 
 @app.get('/icmal/indir')
+@auth.admin_required
 def icmal_indir():
     hakedis_no = request.args.get('hakedis_no', '').strip()
     if not hakedis_no:

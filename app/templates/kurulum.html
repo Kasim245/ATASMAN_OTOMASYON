@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block content %}
+  <h1>İlk kurulum</h1>
+  <p class="sub">Sistemde henüz hiç kullanıcı yok. Aşağıdan kendi (Yönetici) hesabınızı oluşturun -- bundan sonra
+    diğer personeli "Personel" ekranından siz ekleyeceksiniz. Bu sayfa, ilk hesap oluşturulduktan sonra bir daha
+    görünmeyecek.</p>
+
+  <div class="panel" style="max-width:420px">
+    <form action="{{ url_for('kurulum') }}" method="post">
+      <label for="ad_soyad">Ad Soyad</label>
+      <input type="text" id="ad_soyad" name="ad_soyad" required autofocus>
+
+      <label for="kullanici_adi">Kullanıcı adı</label>
+      <input type="text" id="kullanici_adi" name="kullanici_adi" required>
+
+      <label for="sifre">Şifre</label>
+      <input type="password" id="sifre" name="sifre" required minlength="4">
+
+      <label for="sifre2">Şifre (tekrar)</label>
+      <input type="password" id="sifre2" name="sifre2" required minlength="4">
+
+      <div style="margin-top:20px"><button type="submit">Yönetici hesabını oluştur</button></div>
+    </form>
+  </div>
+{% endblock %}

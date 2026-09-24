@@ -12,6 +12,7 @@
     <h3>Malzeme kalemi kodları</h3>
     <p class="hint">Mahallenin kendi sürekli sayacından atandı (bir önceki ataşmanlardan devam ediyor).
       NetCAD'in "Adı" alanı DXF ile yazılamadığı için, bu kodları ilgili parçalara NetCAD'de elle girin.</p>
+    <div class="table-scroll">
     <table>
       <tr><th>Kalem</th><th>Atanan kodlar</th></tr>
       {% for prefix, codes in item_codes.items() %}
@@ -21,6 +22,7 @@
       </tr>
       {% endfor %}
     </table>
+    </div>
     {% endif %}
 
     {% if minha_count %}

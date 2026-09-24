@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block content %}
+  <h1>Kodu var, çizgisi yok</h1>
+  <p class="sub">Hakediş <strong>{{ hakedis_no }}</strong> · Nokta dosyanızda kod girilmiş ama saha DXF'inde hiçbir
+    çizgide kullanılmamış {{ suggestions|length }} nokta grubu bulundu. Sahada bu noktalar kapatılarak ölçülmüş
+    olmalı, ama NetCAD'de alan/çizgi çizme adımı hiç yapılmamış görünüyor. Aşağıda, ardışık nokta numaralarına göre
+    bunları nasıl birleştirebileceğimizi öneriyoruz — her biri için önizlemeye bakıp onaylayın ya da atlayın.</p>
+
+  <form action="{{ url_for('reconstruct') }}" method="post">
+    <input type="hidden" name="session_id" value="{{ session_id }}">
+
+    {% for suggestion, preview in zip(suggestions, previews) %}
+    <div class="group">
+      <h3>Grup {{ loop.index }} — nokta {{ suggestion.ids[0] }} ile {{ suggestion.ids[-1] }} arası
+        ({{ suggestion.ids|length }} nokta)</h3>
+      <div class="preview-svg-wrap" style="margin:10px 0">{{ preview|safe }}</div>
+      <p class="meta">Turuncu kenarlar: aynı bordür/oluk kodunu taşıyan ardışık noktalar arasında bulunan kenarlar
+        (bordür/oluk olarak sayılacak). Gri kenarlar: parke alanının sınırı.</p>
+      <label>
+        <input type="checkbox" name="confirm_{{ loop.index0 }}" value="1" checked style="width:auto;display:inline-block;margin-right:8px">
+        Evet, bu {{ suggestion.ids|length }} noktayı numara sırasına göre birleştir (bordür/oluk paralellerini de otomatik at)
+      </label>
+    </div>
+    {% endfor %}
+
+    <div style="margin-top:16px"><button type="submit">Seçimlere göre devam et</button></div>
+  </form>
+
+  <p class="sub"><a href="{{ url_for('index') }}">&larr; Yeniden dosya yükle</a></p>
+{% endblock %}

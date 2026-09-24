@@ -82,11 +82,29 @@ def init_db():
             PRIMARY KEY (hakedis_no, mahalle, prefix)
         )
     """)
+    # Faz 2'nin başlangıcı: giriş/rol sistemi. Tek SQLite dosyasında, ayrı bir
+    # veritabanı servisine geçmeden -- küçük bir ekip için bu yeterli.
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS kullanicilar (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            ad_soyad TEXT NOT NULL,
+            kullanici_adi TEXT NOT NULL UNIQUE,
+            sifre_hash TEXT NOT NULL,
+            rol TEXT NOT NULL CHECK(rol IN ('yonetici', 'personel')),
+            created_at TEXT NOT NULL
+        )
+    """)
+    # eski (giriş sistemi öncesi) veritabanlarında atasmanlar tablosunda
+    # kullanici_id kolonu yok -- varsa dokunma, yoksa ekle (veri kaybı olmaz).
+    cols = [r[1] for r in conn.execute("PRAGMA table_info(atasmanlar)").fetchall()]
+    if 'kullanici_id' not in cols:
+        conn.execute("ALTER TABLE atasmanlar ADD COLUMN kullanici_id INTEGER")
     conn.commit()
     conn.close()
 
 
-def save_atasman(hakedis_no, sira_no, mahalle, cadde_sokak, aykome_no, totals, kapi_no=''):
+def save_atasman(hakedis_no, sira_no, mahalle, cadde_sokak, aykome_no, totals,
+                  kapi_no='', kullanici_id=None):
     """Insert this ataşman's row, or overwrite it if (hakediş no, sıra no)
     already exists (e.g. the same ataşman was re-generated after a fix)."""
     conn = _connect()
@@ -96,13 +114,14 @@ def save_atasman(hakedis_no, sira_no, mahalle, cadde_sokak, aykome_no, totals, k
     update_cols = ', '.join(f'{k}=excluded.{k}' for k in values)
     conn.execute(f"""
         INSERT INTO atasmanlar (hakedis_no, sira_no, mahalle, cadde_sokak, aykome_no,
-                                 kapi_no, {col_names}, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, {placeholders}, ?)
+                                 kapi_no, kullanici_id, {col_names}, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, {placeholders}, ?)
         ON CONFLICT(hakedis_no, sira_no) DO UPDATE SET
             mahalle=excluded.mahalle, cadde_sokak=excluded.cadde_sokak,
             aykome_no=excluded.aykome_no, kapi_no=excluded.kapi_no,
+            kullanici_id=excluded.kullanici_id,
             {update_cols}, created_at=excluded.created_at
-    """, (hakedis_no, sira_no, mahalle, cadde_sokak, aykome_no, kapi_no,
+    """, (hakedis_no, sira_no, mahalle, cadde_sokak, aykome_no, kapi_no, kullanici_id,
           *values.values(), datetime.now().isoformat(timespec='seconds')))
     conn.commit()
     conn.close()
@@ -117,12 +136,23 @@ def list_hakedis_numbers():
     return [r['hakedis_no'] for r in rows]
 
 
-def get_records(hakedis_no):
+def get_records(hakedis_no, kullanici_id=None):
+    """kullanici_id verilirse sadece o kişinin kayıtları döner (Personel
+    rolü için); Yönetici hepsini görebildiği için None bırakır. Her satıra
+    ölçen kişinin adı da (varsa) eklenir -- eski kayıtlarda kullanici_id
+    boş olabilir, bu durumda 'ad_soyad' None döner."""
     conn = _connect()
-    rows = conn.execute("""
-        SELECT * FROM atasmanlar WHERE hakedis_no = ?
-        ORDER BY CAST(sira_no AS INTEGER), sira_no
-    """, (hakedis_no,)).fetchall()
+    query = """
+        SELECT a.*, k.ad_soyad AS olcen_ad_soyad
+        FROM atasmanlar a LEFT JOIN kullanicilar k ON k.id = a.kullanici_id
+        WHERE a.hakedis_no = ?
+    """
+    params = [hakedis_no]
+    if kullanici_id is not None:
+        query += " AND a.kullanici_id = ?"
+        params.append(kullanici_id)
+    query += " ORDER BY CAST(a.sira_no AS INTEGER), a.sira_no"
+    rows = conn.execute(query, params).fetchall()
     conn.close()
     return [dict(r) for r in rows]
 
@@ -187,6 +217,77 @@ def allocate_item_codes(hakedis_no, mahalle, prefix_counts):
     conn.commit()
     conn.close()
     return out
+
+
+def count_users():
+    conn = _connect()
+    n = conn.execute("SELECT COUNT(*) FROM kullanicilar").fetchone()[0]
+    conn.close()
+    return n
+
+
+def create_user(ad_soyad, kullanici_adi, sifre_hash, rol):
+    conn = _connect()
+    conn.execute("""
+        INSERT INTO kullanicilar (ad_soyad, kullanici_adi, sifre_hash, rol, created_at)
+        VALUES (?, ?, ?, ?, ?)
+    """, (ad_soyad.strip(), kullanici_adi.strip(), sifre_hash, rol,
+          datetime.now().isoformat(timespec='seconds')))
+    conn.commit()
+    conn.close()
+
+
+def get_user_by_username(kullanici_adi):
+    conn = _connect()
+    row = conn.execute(
+        "SELECT * FROM kullanicilar WHERE kullanici_adi = ?", (kullanici_adi.strip(),)
+    ).fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
+def get_user_by_id(user_id):
+    conn = _connect()
+    row = conn.execute("SELECT * FROM kullanicilar WHERE id = ?", (user_id,)).fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
+def list_users():
+    conn = _connect()
+    rows = conn.execute(
+        "SELECT id, ad_soyad, kullanici_adi, rol, created_at FROM kullanicilar ORDER BY ad_soyad"
+    ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def user_atasman_stats(kullanici_id=None):
+    """Ana panel için: toplam ataşman sayısı ve son 30 gündeki sayı --
+    kullanici_id verilirse sadece o kişinin, verilmezse herkesin (Yönetici
+    paneli için)."""
+    conn = _connect()
+    where = "WHERE kullanici_id = ?" if kullanici_id is not None else ""
+    params = (kullanici_id,) if kullanici_id is not None else ()
+    total = conn.execute(f"SELECT COUNT(*) FROM atasmanlar {where}", params).fetchone()[0]
+    son30 = conn.execute(f"""
+        SELECT COUNT(*) FROM atasmanlar {where} {'AND' if where else 'WHERE'}
+        created_at >= datetime('now', '-30 days')
+    """, params).fetchone()[0]
+    conn.close()
+    return {'toplam': total, 'son_30_gun': son30}
+
+
+def per_user_atasman_counts():
+    """Yönetici paneli için: her personelin toplam kaç ataşman ürettiği."""
+    conn = _connect()
+    rows = conn.execute("""
+        SELECT k.ad_soyad, COUNT(a.id) AS adet
+        FROM kullanicilar k LEFT JOIN atasmanlar a ON a.kullanici_id = k.id
+        GROUP BY k.id ORDER BY adet DESC
+    """).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
 
 
 def get_mahalle_counters(hakedis_no, mahalle):

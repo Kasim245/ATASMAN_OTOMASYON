@@ -27,7 +27,9 @@ import collections
 import math
 
 from .dxf_io import load_dxf_pairs, parse_entities, g
-from .points import load_ncn, match_points_to_ncn, classify_polygon, find_bordur_edges
+from .points import (
+    load_ncn, match_points_to_ncn, classify_polygon, find_bordur_edges, find_orphan_runs,
+)
 from .geometry import area2d, dist, offset_edge_outward, point_in_polygon
 from .config import (
     BORDUR_CODE_MAP, OLUK_CODES, MINHA_CODES, TEMPLATES,
@@ -45,6 +47,57 @@ from .mahalle import load_mahalle_boundaries, find_mahalle
 CLUSTER_RADIUS_M = 150.0
 
 
+def _build_candidate(verts, ids, pts):
+    """Bir kapalı halkayı (ham koordinatlar + eşleşen nokta id'leri) bir aday
+    sözlüğüne çevirir -- hem gerçek saha DXF'inden gelen kapalı çizgiler hem
+    de kodu var ama çizgisi hiç çizilmemiş noktalardan yeniden inşa edilen
+    (reconstructed) şekiller için ORTAK yol. `ids` bazı girdilerde None
+    içerebilir (DXF'teki bir köşe hiçbir NCN noktasına yeterince yakın
+    değilse); reconstruction yolunda hepsi gerçek id'dir.
+
+    Poligon sadece minha (m70) kodlu noktalardan oluşuyorsa None döner ve
+    ikinci eleman (verts, area, centroid) minha bilgisini taşır -- çağıran
+    bunu minha_polys listesine ekler."""
+    cx = sum(x for x, y in verts) / len(verts)
+    cy = sum(y for x, y in verts) / len(verts)
+    matched_codes = [pts[i][3] for i in ids if i is not None]
+
+    if matched_codes and all(c in MINHA_CODES for c in matched_codes):
+        return None, (verts, area2d(verts), (cx, cy))
+
+    parke_key, minha, cnt = classify_polygon(ids, pts)
+    # bordür/oluk çizgisi, ölçülen parke kenarına paralel -- taşın kendi
+    # genişliği kadar (12cm/30cm) parça poligonunun DIŞINA doğru kaydırılıp
+    # çiziliyor (kullanıcının NetCAD'de elle yaptığı "alanı ölç, kenarına
+    # paralel at" adımının otomatiği); bu sadece çizim konumu, uzunluk
+    # (piece_bordur[...][3], hakediş miktarı) ham nokta mesafesinden.
+    piece_bordur = []
+    for p1, p2, code in find_bordur_edges(ids, pts, set(BORDUR_CODE_MAP)):
+        p1o, p2o = offset_edge_outward(p1, p2, (cx, cy), BORDUR_OFFSET_M)
+        piece_bordur.append((BORDUR_CODE_MAP[code], p1, p2, dist(p1, p2), p1o, p2o))
+    for p1, p2, code in find_bordur_edges(ids, pts, OLUK_CODES):
+        p1o, p2o = offset_edge_outward(p1, p2, (cx, cy), OLUK_OFFSET_M)
+        piece_bordur.append(('T8', p1, p2, dist(p1, p2), p1o, p2o))
+    # kodu hiç tanınmayan bir parça (ne parke kodu ne bordür/oluk kenarı
+    # bulundu) artık SESSİZCE atılmıyor -- kullanıcıya sorulmak üzere
+    # 'unclassified' işaretiyle kümeye dahil ediliyor (bkz.
+    # classify_unclassified_piece ve main.py::generate). Alanı yine de
+    # hesaplayıp saklıyoruz ki kullanıcı "bu bir parke" derse hazır olsun.
+    unclassified = not parke_key and not piece_bordur
+    candidate = {
+        'verts': verts,
+        'area': area2d(verts) if (parke_key or unclassified) else 0.0,
+        'parke_key': parke_key,
+        'piece_bordur': piece_bordur,
+        'cx': cx, 'cy': cy,
+        'ymin': min(y for x, y in verts),
+        'minha_area': 0.0,
+        'minha_shapes': [],
+        'unclassified': unclassified,
+    }
+    return candidate, None
+
+
 def parse_survey_candidates(ncn, saha_dxf):
     """Every closed polyline in the survey DXF that carries a recognized
     parke and/or bordür/oluk code, regardless of which street it belongs to.
@@ -59,65 +112,52 @@ def parse_survey_candidates(ncn, saha_dxf):
     the drawing/template -- the per-item NET-of-minha figure (parke minus
     the minha area inside it) is only computed for the İcmal Excel, in
     totals_from_candidates() below.
+
+    `saha_dxf` may be None (or the file may contain zero polylines) -- some
+    field batches only ever get as far as the coded point file, NetCAD'de
+    hiç alan/çizgi çizilmeden kalmış olabilir. Bu durumda candidates boş
+    döner ve pts'teki HİÇBİR nokta "consumed" sayılmaz -- kodu olan her nokta
+    build_reconstruction_suggestions() tarafından yeniden inşa adayı olarak
+    değerlendirilir.
+
+    Returns (candidates, pts, consumed_ids) -- pts ve consumed_ids,
+    main.py'nin build_reconstruction_suggestions() çağırıp "kodu var ama
+    çizgisi hiç çizilmemiş" noktaları bulması için gerekli.
     """
     pts = load_ncn(ncn)
-    pairs_survey = load_dxf_pairs(saha_dxf)
-    ents_survey = parse_entities(pairs_survey)
-
+    consumed_ids = set()
     polys = []
-    curp = None
-    for e in ents_survey:
-        if e['type'] == 'POLYLINE':
-            flag = int(g(e, 70)[0]) if g(e, 70) else 0
-            curp = {'flag': flag, 'v': []}
-            polys.append(curp)
-        elif e['type'] == 'VERTEX' and curp is not None:
-            curp['v'].append((float(g(e, 10)[0]), float(g(e, 20)[0])))
-        elif e['type'] == 'SEQEND':
-            curp = None
+    if saha_dxf:
+        pairs_survey = load_dxf_pairs(saha_dxf)
+        ents_survey = parse_entities(pairs_survey)
+        curp = None
+        for e in ents_survey:
+            if e['type'] == 'POLYLINE':
+                flag = int(g(e, 70)[0]) if g(e, 70) else 0
+                curp = {'flag': flag, 'v': []}
+                polys.append(curp)
+            elif e['type'] == 'VERTEX' and curp is not None:
+                curp['v'].append((float(g(e, 10)[0]), float(g(e, 20)[0])))
+            elif e['type'] == 'SEQEND':
+                curp = None
 
     candidates = []
     minha_polys = []  # [(verts, area, centroid)], matched to a host piece below
     for p in polys:
-        if not p['flag'] & 1:
-            continue
         verts = p['v']
         if len(verts) < 3:
             continue
         ids = match_points_to_ncn(verts, pts)
-        matched_codes = [pts[i][3] for i in ids if i is not None]
-        cx = sum(x for x, y in verts) / len(verts)
-        cy = sum(y for x, y in verts) / len(verts)
-
-        if matched_codes and all(c in MINHA_CODES for c in matched_codes):
-            minha_polys.append((verts, area2d(verts), (cx, cy)))
+        # bu noktalar DXF'te bir çizgide kullanılmış -- hangi çizgi olursa
+        # olsun (kapalı olmasa bile), yeniden inşa önerisine dahil edilmesin.
+        consumed_ids.update(i for i in ids if i is not None)
+        if not p['flag'] & 1:
             continue
-
-        parke_key, minha, cnt = classify_polygon(ids, pts)
-        # bordür/oluk çizgisi, ölçülen parke kenarına paralel -- taşın kendi
-        # genişliği kadar (12cm/30cm) parça poligonunun DIŞINA doğru kaydırılıp
-        # çiziliyor (kullanıcının NetCAD'de elle yaptığı "alanı ölç, kenarına
-        # paralel at" adımının otomatiği); bu sadece çizim konumu, uzunluk
-        # (piece_bordur[...][3], hakediş miktarı) ham nokta mesafesinden.
-        piece_bordur = []
-        for p1, p2, code in find_bordur_edges(ids, pts, set(BORDUR_CODE_MAP)):
-            p1o, p2o = offset_edge_outward(p1, p2, (cx, cy), BORDUR_OFFSET_M)
-            piece_bordur.append((BORDUR_CODE_MAP[code], p1, p2, dist(p1, p2), p1o, p2o))
-        for p1, p2, code in find_bordur_edges(ids, pts, OLUK_CODES):
-            p1o, p2o = offset_edge_outward(p1, p2, (cx, cy), OLUK_OFFSET_M)
-            piece_bordur.append(('T8', p1, p2, dist(p1, p2), p1o, p2o))
-        if not parke_key and not piece_bordur:
+        candidate, minha_info = _build_candidate(verts, ids, pts)
+        if candidate is None:
+            minha_polys.append(minha_info)
             continue
-        candidates.append({
-            'verts': verts,
-            'area': area2d(verts) if parke_key else 0.0,
-            'parke_key': parke_key,
-            'piece_bordur': piece_bordur,
-            'cx': cx, 'cy': cy,
-            'ymin': min(y for x, y in verts),
-            'minha_area': 0.0,
-            'minha_shapes': [],
-        })
+        candidates.append(candidate)
 
     # match each minha polygon to the parke piece it geometrically sits
     # inside of (first candidate whose polygon contains the minha's centroid)
@@ -128,7 +168,60 @@ def parse_survey_candidates(ncn, saha_dxf):
                 c['minha_shapes'].append(verts)
                 break
 
-    return candidates
+    return candidates, pts, consumed_ids
+
+
+def build_reconstruction_suggestions(pts, consumed_ids):
+    """Kodu olup saha DXF'inde hiçbir çizgide kullanılmamış noktaları
+    (find_orphan_runs) bulur, her ardışık numaralı grubu -- sanki gerçek bir
+    DXF'ten gelmiş gibi -- bir aday sözlüğüne çevirir. Bunlar hemen
+    candidates listesine EKLENMEZ: main.py önce kullanıcıya bir görsel
+    gösterip onay/atla seçimi aldırır (bkz. reconstruct.html, /reconstruct),
+    sonra sadece onaylananlar gerçek candidates listesine katılır.
+
+    Her öneri: {'ids': [1,2,...,15], 'candidate': {...} veya None (poligon
+    tamamen minha kodluysa -- bu, tek başına anlamsız olduğu için atlanır)}.
+    """
+    runs = find_orphan_runs(pts, consumed_ids)
+    suggestions = []
+    for run in runs:
+        verts = [pts[i][:2] for i in run]
+        candidate, minha_info = _build_candidate(verts, run, pts)
+        if candidate is None:
+            continue  # tamamen minha kodlu bir grup tek başına anlamlı değil
+        suggestions.append({'ids': run, 'candidate': candidate})
+    return suggestions
+
+
+def classify_unclassified_piece(candidate, choice_key, choice_kind):
+    """Kullanıcı, kodu tanınmayan bir parça için ne olduğunu (T7/T6/T3 =
+    alan, T5/T4/T8 = uzunluk) elle seçtiğinde bu parçayı normal bir aday
+    gibi kullanılabilir hale getirir -- generate() içinde, generate_atasman
+    çağrılmadan HEMEN ÖNCE çağrılır.
+
+    'area' seçimi: tüm poligon o parke kalemiymiş gibi sayılır (aynı
+    eprk/yprk/küp koduymuş gibi). 'length' seçimi: hangi kenarın bordür/oluk
+    olduğu koddan bilinemediği için parçanın TÜM çevresi, kenar kenar, o
+    kaleme yazılır -- her kenar, ölçülen bordür/oluk taşları ile aynı
+    şekilde (12cm/30cm) dışa doğru kaydırılarak çizilir."""
+    verts = candidate['verts']
+    cx, cy = candidate['cx'], candidate['cy']
+    if choice_kind == 'area':
+        candidate['parke_key'] = choice_key
+        candidate['area'] = area2d(verts)
+        candidate['piece_bordur'] = []
+    else:
+        offset_m = OLUK_OFFSET_M if choice_key == 'T8' else BORDUR_OFFSET_M
+        n = len(verts)
+        edges = []
+        for k in range(n):
+            p1, p2 = verts[k], verts[(k + 1) % n]
+            p1o, p2o = offset_edge_outward(p1, p2, (cx, cy), offset_m)
+            edges.append((choice_key, p1, p2, dist(p1, p2), p1o, p2o))
+        candidate['piece_bordur'] = edges
+        candidate['parke_key'] = None
+        candidate['area'] = 0.0
+    candidate['unclassified'] = False
 
 
 def cluster_candidates(candidates, radius=CLUSTER_RADIUS_M):
@@ -246,6 +339,7 @@ def describe_clusters(candidates, background_dxf_path=None, mahalle_dxf_path=Non
             'candidates': cl,
             'piece_count': sum(1 for c in cl if c['parke_key']),
             'bordur_count': sum(1 for c in cl if c['piece_bordur']),
+            'unclassified_count': sum(1 for c in cl if c.get('unclassified')),
             'total_area': round(sum(c['area'] for c in cl if c['parke_key']), 2),
             'centroid': centroid,
             'bbox': bbox,

@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% block content %}
+  <h1>Personel</h1>
+  <p class="sub">Yeni bir çalışan için hesap açın (kendi kullanıcı adı + şifresiyle giriş yapıp kendi ölçtüğü
+    ataşmanları üretir), ya da mevcut personeli görün.</p>
+
+  <div class="panel" style="max-width:420px">
+    <h3 style="margin-top:0">Yeni personel ekle</h3>
+    <form action="{{ url_for('personel') }}" method="post">
+      <label for="ad_soyad">Ad Soyad</label>
+      <input type="text" id="ad_soyad" name="ad_soyad" placeholder="Emre Olgun" required>
+
+      <label for="kullanici_adi">Kullanıcı adı</label>
+      <input type="text" id="kullanici_adi" name="kullanici_adi" placeholder="emre.olgun" required>
+
+      <label for="sifre">Şifre</label>
+      <input type="password" id="sifre" name="sifre" required minlength="4">
+
+      <label for="rol">Rol</label>
+      <select id="rol" name="rol">
+        <option value="personel" selected>Personel (kendi işini görür/üretir)</option>
+        <option value="yonetici">Yönetici (her şeyi görür/yönetir)</option>
+      </select>
+
+      <div style="margin-top:20px"><button type="submit">Hesap oluştur</button></div>
+    </form>
+  </div>
+
+  <div class="panel">
+    <h3 style="margin-top:0">Mevcut personel ({{ users|length }})</h3>
+    <div class="table-scroll">
+    <table>
+      <tr><th>Ad Soyad</th><th>Kullanıcı adı</th><th>Rol</th><th>Eklendi</th></tr>
+      {% for u in users %}
+      <tr>
+        <td>{{ u.ad_soyad }}</td>
+        <td><code>{{ u.kullanici_adi }}</code></td>
+        <td>{{ 'Yönetici' if u.rol == 'yonetici' else 'Personel' }}</td>
+        <td>{{ u.created_at }}</td>
+      </tr>
+      {% endfor %}
+    </table>
+    </div>
+  </div>
+{% endblock %}

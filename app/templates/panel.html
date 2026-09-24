@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% block content %}
+  <h1>Merhaba, {{ session.get('ad_soyad') }}</h1>
+  <p class="sub">{{ 'Yönetici paneline hoş geldiniz.' if is_admin else 'Ataşman Otomasyonu ana paneline hoş geldiniz.' }}</p>
+
+  <div class="panel">
+    <h3 style="margin-top:0">Hızlı erişim</h3>
+    <div style="display:flex; gap:12px; flex-wrap:wrap">
+      <a class="btn" href="{{ url_for('index') }}" style="text-decoration:none; display:inline-block">Ataşman Üret</a>
+      <a class="btn" href="{{ url_for('icmal_index') }}" style="text-decoration:none; display:inline-block">İcmal</a>
+      {% if is_admin %}
+      <a class="btn" href="{{ url_for('personel') }}" style="text-decoration:none; display:inline-block">Personel</a>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="panel">
+    <h3 style="margin-top:0">{{ 'Sizin ürettikleriniz' if not is_admin else 'Sizin ürettikleriniz (Yönetici)' }}</h3>
+    <p class="meta">Toplam <strong>{{ own_stats.toplam }}</strong> ataşman · son 30 günde <strong>{{ own_stats.son_30_gun }}</strong> ataşman</p>
+  </div>
+
+  {% if is_admin %}
+  <div class="panel">
+    <h3 style="margin-top:0">Personel bazında ataşman sayıları</h3>
+    <div class="table-scroll">
+    <table>
+      <tr><th>Personel</th><th>Toplam ataşman</th></tr>
+      {% for row in per_user %}
+      <tr><td>{{ row.ad_soyad }}</td><td>{{ row.adet }}</td></tr>
+      {% endfor %}
+    </table>
+    </div>
+    <p class="meta" style="margin-top:10px">Bir hakedişteki tüm kayıtları (kimin ölçtüğü dahil) görmek için
+      <a href="{{ url_for('icmal_index') }}">İcmal</a> sayfasına gidin.</p>
+  </div>
+  {% endif %}
+{% endblock %}
