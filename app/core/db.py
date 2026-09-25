@@ -342,6 +342,23 @@ def get_atasman_by_id(record_id):
     return dict(row) if row else None
 
 
+def next_sira_no(is_id, hakedis_no):
+    """Faz 1.8: per the user, sıra no'yu (ataşman no) her ataşmanda elle
+    girmek zorunda kalmasın -- bu hakediş/iş havuzunda şu ana kadar
+    kullanılmış EN BÜYÜK sayısal sıra no'dan bir fazlasını önerir (hiç yoksa
+    1). Sadece tamamen sayısal olanlar dikkate alınır ("12A" gibi harf
+    içerenler yok sayılır, MAX() bunlarla karışmasın); clusters.html bunu
+    her grubun "Sıra No" alanına varsayılan değer olarak koyuyor, kullanıcı
+    isterse yine de elle değiştirebiliyor."""
+    conn = _connect()
+    rows = conn.execute(
+        "SELECT sira_no FROM atasmanlar WHERE is_id = ? AND hakedis_no = ?", (is_id, hakedis_no)
+    ).fetchall()
+    conn.close()
+    nums = [int(r['sira_no']) for r in rows if str(r['sira_no']).strip().isdigit()]
+    return (max(nums) + 1) if nums else 1
+
+
 def list_hakedis_numbers(is_id):
     """Sadece VERİLEN işin havuzundaki hakediş numaraları -- her işin
     hakediş numaralandırması kendi başına, birbirinden bağımsız."""

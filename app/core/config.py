@@ -185,11 +185,21 @@ BORDUR_LAYER = {'T4': 'T_4_İDRDN_BORDÜR', 'T5': 'T_5_YERİNDE_BORDÜR', 'T8': 
 # LAYER table entries the blank template is missing, needed for background
 # (imar planı altlığı) content pulled in from a district-wide cadastral DXF.
 # ACI color codes matched against the real Akabe_45.Dxf reference file.
+# Faz 1.8: Z_YOL_ADI/Z_KAPI_NO renk 7'den 250'ye değiştirildi -- kullanıcının
+# "yazılar gözükmüyor" şikayetiyle gönderdiği ekran görüntüsünde, renk 7
+# (AutoCAD'in "beyaz/siyah" -- arka plana göre kendini ayarlayan, adaptif
+# rengi) kullanılan HER ŞEY (klişedeki tüm yazılar + sokak isimleri + kapı
+# no'lar) görünmüyordu, buna karşılık başka renkteki her şey (binalar: 32/132,
+# ada kenarı/cadde-sokak: 18) normal görünüyordu -- kullanıcının DXF görüntüleyicisi
+# bu adaptif rengi (muhtemelen) her zaman literal beyaz olarak çiziyor, siyah
+# kağıt üzerinde görünmez oluyor. 250, ACI paletinde sabit (arka plana göre
+# DEĞİŞMEYEN) çok koyu gri/siyaha yakın bir renk -- artık hiçbir görüntüleyici
+# konvansiyonuna bağımlı değil.
 NEW_LAYERS = [
     ('Z_YAPI_RUHSTLI_PL', '32'),
     ('Z_YAPI_RUHSTSIZ_PL', '132'),
-    ('Z_YOL_ADI', '7'),
-    ('Z_KAPI_NO', '7'),
+    ('Z_YOL_ADI', '250'),
+    ('Z_KAPI_NO', '250'),
     ('ADAKENARI', '18'),
     ('T_CADDE_SOKAK', '18'),
 ]

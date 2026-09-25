@@ -73,7 +73,15 @@ def generate_atasman(inp: AtasmanInput):
     def T(x, y):
         return tx + scale * x, ty + scale * y
 
-    # ---- load template, patch T_KLİŞE layer color to black/white (7) ----
+    # ---- load template, patch T_KLİŞE layer color ----
+    # Faz 1.8: rengi eskiden '7'ye (AutoCAD'in arka plana göre kendini
+    # ayarlayan "beyaz/siyah" adaptif rengi) sabitliyordu -- kullanıcının
+    # ekran görüntüsünde bu rengi kullanan HER ŞEY (klişedeki tüm yazılar
+    # dahil) görünmüyordu, kullanıcının DXF görüntüleyicisi bu adaptif
+    # rengi (muhtemelen) her zaman literal beyaz çiziyor. '250' (ACI
+    # paletinde sabit, çok koyu gri/siyaha yakın bir renk -- bkz.
+    # config.py::NEW_LAYERS'daki aynı değişiklik) hiçbir görüntüleyici
+    # konvansiyonuna bağımlı olmadan her zaman koyu/görünür kalır.
     pairs = load_dxf_pairs(tpl['path'])
     i = 0
     while i < len(pairs):
@@ -86,7 +94,7 @@ def generate_atasman(inp: AtasmanInput):
             if (2, 'T_KLIŞE') in rec:
                 for k in range(rec_start, j):
                     if pairs[k][0] == 62:
-                        pairs[k] = (62, '7')
+                        pairs[k] = (62, '250')
                         break
             i = j
         else:

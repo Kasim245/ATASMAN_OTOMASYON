@@ -13,10 +13,21 @@ with a containing polygon, and the pairing correctly places the Akabe 4/45
 cluster's centroid inside the AKABE polygon.
 """
 from .dxf_io import load_dxf_pairs, parse_entities, g
-from .geometry import point_in_polygon
+from .geometry import point_in_polygon, point_to_polygon_distance
 
 BOUNDARY_LAYER = 'Z_NMAHALLE_PL'
 NAME_LAYER = 'AADI'
+
+# Faz 1.8: per the user ("yine bana mahalle bilgisini soruyor"), kesin
+# point-in-polygon testi TEK BAŞINA yeterli değildi -- bir işin merkezi,
+# sınır çiziminin basitleştirilmesi/dijitalleştirme hassasiyeti yüzünden
+# gerçek mahalle sınırının hemen (birkaç metre) DIŞINDA kalabiliyor, bu da
+# gereksiz yere "mahalleyi elle girin" sorusuna düşürüyordu. Bu yüzden kesin
+# eşleşme yoksa, en yakın sınıra bu mesafeden daha yakınsa yine de o mahalle
+# öneriliyor -- ama bunun ötesinde (gerçekten başka/kapsanmayan bir bölgede)
+# hâlâ None dönüp kullanıcıya soruluyor, rastgele bir mahalleye
+# yapıştırılmıyor.
+NEARBY_FALLBACK_M = 30.0
 
 
 def load_mahalle_boundaries(path):
@@ -58,9 +69,17 @@ def load_mahalle_boundaries(path):
 
 
 def find_mahalle(x, y, boundaries):
-    """Which mahalle (if any) contains (x, y). Returns the name, or None if
-    the point falls outside every boundary in the file."""
+    """Which mahalle (if any) contains (x, y). Kesin point-in-polygon
+    eşleşmesi yoksa, en yakın sınıra NEARBY_FALLBACK_M'den daha yakınsa yine
+    o mahalle döner (bkz. yukarıdaki NEARBY_FALLBACK_M yorumu) -- gerçekten
+    hiçbir mahalleye (ne içeride ne yakında) düşmüyorsa None döner ve
+    kullanıcıya elle sorulur."""
     for b in boundaries:
         if point_in_polygon(x, y, b['poly']):
             return b['name']
+    if not boundaries:
+        return None
+    nearest = min(boundaries, key=lambda b: point_to_polygon_distance(x, y, b['poly']))
+    if point_to_polygon_distance(x, y, nearest['poly']) <= NEARBY_FALLBACK_M:
+        return nearest['name']
     return None

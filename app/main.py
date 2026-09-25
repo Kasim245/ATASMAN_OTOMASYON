@@ -27,7 +27,7 @@ from .core.config import (
     ATASMAN_CIKTI_DIR,
 )
 from .core.db import (
-    init_db, save_atasman, list_hakedis_numbers, get_records, get_atasman_by_id,
+    init_db, save_atasman, list_hakedis_numbers, get_records, get_atasman_by_id, next_sira_no,
     get_unit_prices, set_unit_prices, delete_record, T_KEYS,
     allocate_item_codes, count_users, create_user, get_user_by_username,
     get_user_by_id, get_user_by_email, update_user_info, set_user_password,
@@ -154,6 +154,32 @@ def is_degistir():
     return redirect(next_url)
 
 
+def _annotate_groups_for_render(sess, groups):
+    """Faz 1.8: her gruba, kullanıcının "Sıra No"yu (ataşman no) elle
+    girmesine gerek kalmasın diye önerilen bir sonraki sayıyı ekliyor (bkz.
+    db.next_sira_no) -- per the user, bir sıra no bir kere verilince
+    devamı otomatik gelsin. Bu oturumda DAHA ÖNCE üretilmiş bir küme varsa
+    (bkz. main.py::generate, sess['generated']) onun kendi gerçek sıra
+    no'sunu ve dosya adını da ekliyor -- clusters.html bunu "✓ zaten
+    üretildi" notuyla gösteriyor, kullanıcı üç ataşmanlı bir yüklemede
+    ilkini üretip sonra geri döndüğünde hangisinin bitmiş olduğunu görebilsin
+    diye (bkz. Faz 1.8'in ikinci şikayeti: "3 ataşman yaptığını söyledi,
+    sadece bir tanesini alabildim")."""
+    is_id = sess.get('is_id')
+    hakedis_no = sess.get('hakedis_no')
+    next_free = next_sira_no(is_id, hakedis_no) if (is_id and hakedis_no) else 1
+    generated = sess.get('generated', {})
+    for idx, grp in enumerate(groups):
+        info = generated.get(idx)
+        grp['generated_info'] = info
+        if info:
+            grp['suggested_sira_no'] = info['sira_no']
+        else:
+            grp['suggested_sira_no'] = str(next_free)
+            next_free += 1
+    return groups
+
+
 def _render_clusters(session_id, candidates, hakedis_no, radius=None):
     """candidates listesinden (yeniden inşa edilip onaylanmış parçalar dahil
     edilmiş haliyle) kümeleri hesaplar, oturuma kaydeder, küme ekranını
@@ -184,6 +210,11 @@ def _render_clusters(session_id, candidates, hakedis_no, radius=None):
     sess['groups'] = groups
     sess['candidates'] = candidates
     sess['cluster_radius'] = radius
+    # Faz 1.8: bu her zaman TAZE bir kümeleme hesabı -- önceki "şu küme
+    # üretildi" işaretlemeleri (sess['generated'], eski grup indekslerine
+    # göre tutuluyordu) artık anlamsız, karışıklık olmasın diye temizleniyor.
+    sess['generated'] = {}
+    groups = _annotate_groups_for_render(sess, groups)
     return render_template('clusters.html', session_id=session_id, groups=groups,
                             hakedis_no=hakedis_no, templates=TEMPLATES, enumerate=enumerate,
                             manual_piece_choices=MANUAL_PIECE_CHOICES, cluster_radius=radius,
@@ -645,12 +676,28 @@ def regroup():
 
 
 def _render_groups(session_id, sess, groups):
-    """/merge-groups sonrası (ya da hata durumunda) küme ekranını, oturumdaki
-    GÜNCEL groups listesiyle (yeniden kümelemeden) tekrar render eder."""
+    """/merge-groups sonrası (ya da hata durumunda) ya da /kumeler-devam ile
+    (Faz 1.8) küme ekranını, oturumdaki GÜNCEL groups listesiyle (yeniden
+    kümelemeden) tekrar render eder."""
+    groups = _annotate_groups_for_render(sess, groups)
     return render_template('clusters.html', session_id=session_id, groups=groups,
                             hakedis_no=sess.get('hakedis_no'), templates=TEMPLATES, enumerate=enumerate,
                             manual_piece_choices=MANUAL_PIECE_CHOICES, cluster_radius=sess.get('cluster_radius'),
                             default_manual_radius=CLUSTER_RADIUS_M)
+
+
+@app.get('/kumeler-devam/<session_id>')
+@auth.login_required
+def kumeler_devam(session_id):
+    """Faz 1.8: kullanıcı bir kümeyi ürettikten sonra "sonuç" ekranından bu
+    linke tıklayarak, dosyaları BAŞTAN yüklemeden aynı oturumdaki kümeler
+    ekranına (kalan kümeler + hangileri zaten üretildi işaretiyle) geri
+    döner -- bkz. result.html'deki "Kalan kümelere dön" linki."""
+    sess = SESSIONS.get(session_id)
+    if not sess or not sess.get('groups'):
+        flash('Oturum süresi doldu, dosyaları tekrar yükleyin.')
+        return redirect(url_for('index'))
+    return _render_groups(session_id, sess, sess['groups'])
 
 
 @app.post('/merge-groups')
@@ -684,6 +731,9 @@ def merge_groups():
     remaining.append(new_group)
     remaining.sort(key=lambda g: -g['piece_count'])
     sess['groups'] = remaining
+    # Faz 1.8: birleştirme grup sırasını/indekslerini değiştiriyor -- eski
+    # "üretildi" işaretlemeleri artık yanlış gruba denk gelebilir, temizle.
+    sess['generated'] = {}
     flash(f"{len(idxs)} küme birleştirildi -- yeni küme {new_group['piece_count']} parke parçası, "
           f"{new_group['bordur_count']} bordür/oluk kenarı içeriyor.")
     return _render_groups(session_id, sess, remaining)
@@ -732,7 +782,12 @@ def generate():
               "sessizce (okunaksız) üretim yapmıyoruz. Küme ekranındaki "
               "'Yakınlık mesafesi'ni küçültüp grupları yeniden hesaplayın, bu "
               "alan muhtemelen birden fazla ayrı ataşman olmalı.")
-        return redirect(url_for('index'))
+        # Faz 1.8: eskiden index()'e (baştan yükleme ekranı) dönüyordu -- bu,
+        # kullanıcı 3 kümeden birini ürettikten sonra bir SONRAKİ kümede hata
+        # alırsa, geri kalan kümelerin tamamını (session'daki 'groups')
+        # kaybedip yeniden yüklemeye zorluyordu. Artık aynı küme ekranına,
+        # kalan kümeler ve önceden üretilenlerin işaretiyle geri dönüyor.
+        return _render_groups(session_id, sess, sess['groups'])
 
     inp = AtasmanInput(
         template_scale=template_scale,
@@ -750,7 +805,10 @@ def generate():
         result = generate_atasman(inp)
     except Exception as exc:
         flash(f"Üretim sırasında hata oluştu: {exc}")
-        return redirect(url_for('index'))
+        # Faz 1.8: bkz. yukarıdaki template_scale kontrolündeki not -- aynı
+        # sebeple burada da index()'e değil, kalan kümelerin göründüğü küme
+        # ekranına dönüyoruz.
+        return _render_groups(session_id, sess, sess['groups'])
 
     out_name = _atasman_dosya_adi(inp.hakedis_no, inp.sira_no, inp.mahalle)
     sdir = _session_dir(session_id)
@@ -792,6 +850,14 @@ def generate():
     except Exception as exc:
         flash(f"DXF üretildi, ama İcmal kaydı tutulamadı: {exc}")
 
+    # Faz 1.8: bu kümenin üretildiğini işaretle -- (a) küme ekranına geri
+    # dönüldüğünde bu küme "zaten üretildi" rozetiyle gösterilsin, (b) bir
+    # SONRAKİ küme için Sıra No kutusu, kullanıcı elle bir sonraki numarayı
+    # tekrar yazmak zorunda kalmadan otomatik bir artırılmış öneriyle dolsun.
+    sess.setdefault('generated', {})[group_idx] = {
+        'sira_no': inp.sira_no, 'mahalle': inp.mahalle, 'dosya': out_name,
+    }
+
     # bu ataşmandaki her kalemden kaç tane olduğunu (generator.py) mahallenin
     # kendi kalıcı, hiç durmayan sayacına göre gerçek koda çevir (YP6, YP7...)
     # -- NetCAD'in "Adı" alanı DXF ile yazılamadığı için bu kodlar çizime
@@ -803,11 +869,18 @@ def generate():
         item_codes = {}
         flash(f"Malzeme kalemi kodları atanamadı: {exc}")
 
+    # Faz 1.8: kullanıcı bu kümeyi ürettikten sonra, aynı yüklemedeki DİĞER
+    # kümelere (varsa) dönebilsin diye -- eskiden üretim sonrası ekran
+    # sonlanıyor, kalan kümelere ulaşmanın tek yolu dosyaları baştan tekrar
+    # yüklemekti.
+    kalan_kume_var = len(sess.get('generated', {})) < len(sess.get('groups', []))
+
     return render_template('result.html', session_id=session_id, dosya=out_name,
                             item_codes=item_codes, prefix_labels=PREFIX_LABELS,
                             mahalle=inp.mahalle, cadde_sokak=inp.cadde_sokak,
                             hakedis_no=inp.hakedis_no, sira_no=inp.sira_no,
-                            totals=result['totals'], minha_count=result.get('minha_count', 0))
+                            totals=result['totals'], minha_count=result.get('minha_count', 0),
+                            kalan_kume_var=kalan_kume_var)
 
 
 @app.get('/indir')

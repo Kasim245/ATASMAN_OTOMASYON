@@ -3,6 +3,13 @@
   <h1>Ataşman {{ hakedis_no }}/{{ sira_no }} üretildi</h1>
   <p class="sub">{{ mahalle }} · {{ cadde_sokak }}</p>
 
+  {% if kalan_kume_var %}
+  <div class="panel" style="background:#eef7ee">
+    <p><strong>Bu yüklemede henüz üretilmemiş başka küme(ler) var.</strong></p>
+    <a class="btn" href="{{ url_for('kumeler_devam', session_id=session_id) }}">Kalan kümelere dön &rarr;</a>
+  </div>
+  {% endif %}
+
   <div class="panel">
     <div style="margin-bottom:16px">
       <a class="btn" href="{{ url_for('indir_dosya', session_id=session_id, dosya=dosya) }}">Ataşman DXF'ini indir</a>

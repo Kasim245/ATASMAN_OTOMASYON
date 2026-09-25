@@ -47,6 +47,7 @@
       Küme {{ loop.index }}
       {% if loop.first %}<span class="badge">en büyük</span>{% endif %}
       {% if not group.suggested_scale %}<span class="badge warn">hiçbir şablona sığmıyor</span>{% endif %}
+      {% if group.generated_info %}<span class="badge" style="background:#1a7a3c">✓ üretildi -- Sıra No {{ group.generated_info.sira_no }} ({{ group.generated_info.mahalle }})</span>{% endif %}
     </h3>
     <p class="meta">
       {{ group.piece_count }} parke parçası, {{ group.bordur_count }} bordür/oluk kenarı,
@@ -133,7 +134,11 @@
 
       <input type="hidden" name="hakedis_no" value="{{ hakedis_no }}">
       <label>Sıra No</label>
-      <input type="text" name="sira_no" required>
+      <input type="text" name="sira_no" value="{{ group.suggested_sira_no or '' }}" required>
+      <p class="hint">
+        {% if group.generated_info %}Bu küme daha önce {{ group.generated_info.sira_no }} sıra no ile üretildi -- tekrar üretirseniz üzerine yazılır. Farklı bir numara girebilirsiniz.
+        {% else %}İlk kümede girdiğiniz Sıra No'dan sonra, sıradaki kümeler için otomatik bir sonraki numara önerilir.{% endif %}
+      </p>
 
       <label>İmalatın bitiş tarihi (gg/aa/yyyy)</label>
       <input type="text" name="imalat_bitis_tarihi" placeholder="28/07/2026" required>

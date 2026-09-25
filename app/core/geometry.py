@@ -14,6 +14,27 @@ def dist(a, b):
     return math.hypot(a[0] - b[0], a[1] - b[1])
 
 
+def _point_segment_distance(px, py, x1, y1, x2, y2):
+    dx, dy = x2 - x1, y2 - y1
+    if dx == 0 and dy == 0:
+        return math.hypot(px - x1, py - y1)
+    t = ((px - x1) * dx + (py - y1) * dy) / (dx * dx + dy * dy)
+    t = max(0.0, min(1.0, t))
+    cx, cy = x1 + t * dx, y1 + t * dy
+    return math.hypot(px - cx, py - cy)
+
+
+def point_to_polygon_distance(px, py, poly):
+    """En yakın kenara olan mesafe (poligonun İÇİNDE olsa bile 0 değil, en
+    yakın sınıra olan mesafeyi döner) -- mahalle.py::find_mahalle'nin sınırın
+    hemen dışında kalan (dijitalleştirme/basitleştirme kaynaklı ufak
+    boşluklar) noktalar için toleranslı bir yedek eşleşme yapabilmesi için."""
+    n = len(poly)
+    return min(_point_segment_distance(px, py, poly[i][0], poly[i][1],
+                                        poly[(i + 1) % n][0], poly[(i + 1) % n][1])
+               for i in range(n))
+
+
 def polygon_hatch_lines(verts, angle_deg=135.0, spacing=0.4):
     """Real LINE segments filling a (possibly concave) polygon with a diagonal
     hatch, via perpendicular-projection scanlines clipped to every edge.
