@@ -23,7 +23,7 @@ from .core.survey import (
 from .core.preview import render_run_preview_svg
 from .core.generator import AtasmanInput, generate_atasman
 from .core.config import (
-    TEMPLATES, POINT_CODE_TABLE, MAHALLE_DXF_PATH, PREFIX_LABELS, MANUAL_PIECE_CHOICES,
+    TEMPLATES, POINT_CODE_TABLE, MAHALLE_BOUNDARIES_PATH, PREFIX_LABELS, MANUAL_PIECE_CHOICES,
     ATASMAN_CIKTI_DIR,
 )
 from .core.db import (
@@ -201,7 +201,7 @@ def _render_clusters(session_id, candidates, hakedis_no, radius=None):
     `sess['cluster_radius']`) ki /regroup, dosyaları yeniden yükletmeden AYNI
     parça listesini farklı bir şekilde yeniden kümeleyebilsin."""
     sess = SESSIONS[session_id]
-    groups = describe_clusters(candidates, sess.get('bg_path'), sess.get('mahalle_dxf_path'),
+    groups = describe_clusters(candidates, sess.get('bg_path'), sess.get('mahalle_boundaries_path'),
                                 radius=radius)
     if not groups:
         flash('Saha DXF\'inde tanınan hiçbir parke/bordür/oluk parçası bulunamadı '
@@ -584,7 +584,7 @@ def analyze():
         bg_path = os.path.join(sdir, 'background.dxf')
         bg_file.save(bg_path)
 
-    mahalle_dxf_path = MAHALLE_DXF_PATH if os.path.exists(MAHALLE_DXF_PATH) else None
+    mahalle_boundaries_path = MAHALLE_BOUNDARIES_PATH if os.path.exists(MAHALLE_BOUNDARIES_PATH) else None
     try:
         candidates, pts, consumed_ids = parse_survey_candidates(ncn_path, saha_path)
         suggestions = build_reconstruction_suggestions(pts, consumed_ids)
@@ -595,7 +595,7 @@ def analyze():
 
     SESSIONS[session_id] = {
         'ncn_path': ncn_path, 'saha_path': saha_path, 'bg_path': bg_path,
-        'mahalle_dxf_path': mahalle_dxf_path, 'hakedis_no': hakedis_no, 'is_id': secili_is['id'],
+        'mahalle_boundaries_path': mahalle_boundaries_path, 'hakedis_no': hakedis_no, 'is_id': secili_is['id'],
         'base_candidates': candidates, 'pts': pts,
     }
 
@@ -719,13 +719,13 @@ def merge_groups():
     idxs = sorted({int(i) for i in request.form.getlist('merge_idx') if i.isdigit()})
     idxs = [i for i in idxs if 0 <= i < len(groups)]
     if len(idxs) < 2:
-        flash('Birleştirmek için en az 2 küme seçmelisiniz (kümelerin başındaki kutucukları işaretleyin).')
+        flash('Birleştirmek için en az 2 taslak seçmelisiniz (taslakların başındaki kutucukları işaretleyin).')
         return _render_groups(session_id, sess, groups)
 
     merged_candidates = []
     for i in idxs:
         merged_candidates.extend(groups[i]['candidates'])
-    new_group = describe_one_group(merged_candidates, sess.get('bg_path'), sess.get('mahalle_dxf_path'))
+    new_group = describe_one_group(merged_candidates, sess.get('bg_path'), sess.get('mahalle_boundaries_path'))
 
     remaining = [g for i, g in enumerate(groups) if i not in idxs]
     remaining.append(new_group)
@@ -734,7 +734,7 @@ def merge_groups():
     # Faz 1.8: birleştirme grup sırasını/indekslerini değiştiriyor -- eski
     # "üretildi" işaretlemeleri artık yanlış gruba denk gelebilir, temizle.
     sess['generated'] = {}
-    flash(f"{len(idxs)} küme birleştirildi -- yeni küme {new_group['piece_count']} parke parçası, "
+    flash(f"{len(idxs)} taslak birleştirildi -- yeni taslak {new_group['piece_count']} parke parçası, "
           f"{new_group['bordur_count']} bordür/oluk kenarı içeriyor.")
     return _render_groups(session_id, sess, remaining)
 
@@ -777,10 +777,10 @@ def generate():
 
     template_scale = request.form.get('template_scale') or group.get('suggested_scale')
     if template_scale not in TEMPLATES:
-        flash("Bu küme, en kaba şablonumuz olan 1/1000 ölçeğine bile sığmıyor "
+        flash("Bu taslak, en kaba şablonumuz olan 1/1000 ölçeğine bile sığmıyor "
               f"(bbox={group['bbox']}). Sınırımız 1/1000 -- daha kaba bir ölçekte "
-              "sessizce (okunaksız) üretim yapmıyoruz. Küme ekranındaki "
-              "'Yakınlık mesafesi'ni küçültüp grupları yeniden hesaplayın, bu "
+              "sessizce (okunaksız) üretim yapmıyoruz. Bu sayfadaki "
+              "'Yakınlık mesafesi'ni küçültüp taslakları yeniden hesaplayın, bu "
               "alan muhtemelen birden fazla ayrı ataşman olmalı.")
         # Faz 1.8: eskiden index()'e (baştan yükleme ekranı) dönüyordu -- bu,
         # kullanıcı 3 kümeden birini ürettikten sonra bir SONRAKİ kümede hata

@@ -10,12 +10,22 @@ _BORDUR_OLUK_CODES = set(BORDUR_CODE_MAP) | set(OLUK_CODES)
 
 
 def render_run_preview_svg(run_ids, pts, width=420, height=320, pad=36):
-    """`run_ids` sırasındaki noktaları (kapalı halka olarak, sonuncudan
-    ilkine dönerek) bir SVG önizlemesi olarak çizer: her nokta bir daire +
+    """`run_ids` sırasındaki noktaları AÇIK bir zincir olarak (sonuncudan
+    ilkine KAPANMADAN) bir SVG önizlemesi olarak çizer: her nokta bir daire +
     numarası ile, kenarlar da eğer iki ucu da aynı bordür/oluk koduysa
     turuncu, değilse gri çizilir -- tam olarak generate_atasman'ın kendisinin
     bordür/oluk kenarı sayacağı mantığın aynısı (find_bordur_edges), sadece
-    burada henüz bir aday değil, sadece bir görsel."""
+    burada henüz bir aday değil, sadece bir görsel.
+
+    Faz 1.8: eskiden `range(n)` ile SONUNCU noktadan İLK noktaya da bir
+    kenar çiziliyordu (kapalı halkaymış gibi) -- kullanıcı gerçek bir örnekte
+    (194,195,196,197 -- hepsi aynı bordür kodlu) bunun YANLIŞ olduğunu
+    bildirdi: bu bir bordür HATTI, kapalı bir alan değil, 197 ile 194 asla
+    birleşmeyecek. find_bordur_edges() (gerçek üretimde kullanılan, bu
+    önizlemenin taklit etmeye çalıştığı fonksiyon) zaten `range(n-1)` ile
+    HİÇBİR ZAMAN kapanmıyordu -- yani gerçek DXF çıktısı hep doğruydu, sadece
+    bu önizleme yanlışlıkla fazladan bir kenar (ve üstelik aynı kodlu olduğu
+    için TURUNCU/bordür renginde) gösteriyordu. Artık ikisi birebir aynı."""
     coords = [(pts[i][0], pts[i][1]) for i in run_ids]
     xs = [x for x, y in coords]
     ys = [y for x, y in coords]
@@ -36,12 +46,12 @@ def render_run_preview_svg(run_ids, pts, width=420, height=320, pad=36):
 
     n = len(run_ids)
     lines = []
-    for k in range(n):
-        i1, i2 = run_ids[k], run_ids[(k + 1) % n]
+    for k in range(n - 1):
+        i1, i2 = run_ids[k], run_ids[k + 1]
         c1, c2 = pts[i1][3], pts[i2][3]
         is_bordur = c1 == c2 and c1 in _BORDUR_OLUK_CODES
         x1, y1 = to_svg(*coords[k])
-        x2, y2 = to_svg(*coords[(k + 1) % n])
+        x2, y2 = to_svg(*coords[k + 1])
         color = '#c2542b' if is_bordur else '#8a8478'
         width_px = 2.5 if is_bordur else 1.5
         lines.append(

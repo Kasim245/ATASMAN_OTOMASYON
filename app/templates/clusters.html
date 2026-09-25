@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block content %}
   <h1>Tespit edilen işler</h1>
-  <p class="sub">Hakediş <strong>{{ hakedis_no }}</strong> · Dosyada {{ groups|length }} ayrı iş kümesi bulundu (otomatik olarak gruplandı, her grup kendi büyüklüğüne göre en ince şablonu kullanıyor -- 1/250, 1/500 ya da 1/1000). Hangisi bu ataşmana aitse onun altındaki formu doldurup üretin.</p>
+  <p class="sub">Hakediş <strong>{{ hakedis_no }}</strong> · Dosyada {{ groups|length }} ayrı ataşman taslağı bulundu (parçalar otomatik olarak gruplandı, her taslak kendi büyüklüğüne göre en ince şablonu kullanıyor -- 1/250, 1/500 ya da 1/1000). Hangisi doğruysa onun altındaki formu doldurup "üret"e basın -- taslak o zaman gerçek bir ataşman DXF'ine dönüşür.</p>
 
   <div class="panel">
     <h3 style="margin-top:0">Gruplama yanlış mı görünüyor?</h3>
@@ -28,11 +28,11 @@
     </details>
     {% if groups|length > 1 %}
     <details style="margin-top:10px">
-      <summary class="hint" style="cursor:pointer">İleri düzey: belirli kümeleri elle birleştir</summary>
-      <p class="hint" style="margin-top:10px">Aynı işin iki parçası yanlışlıkla ayrı kümelere düştüyse, aşağıda o kümelerin
-        başındaki kutucukları işaretleyip birleştirebilirsiniz (en az 2 küme seçin) -- mahalle/cadde/ölçek önerisi
-        birleşmiş küme için yeniden hesaplanır.</p>
-      <div style="margin-top:8px"><button type="submit" form="merge-form" class="btn-secondary">Seçili kümeleri birleştir</button></div>
+      <summary class="hint" style="cursor:pointer">İleri düzey: belirli taslakları elle birleştir</summary>
+      <p class="hint" style="margin-top:10px">Aynı işin iki parçası yanlışlıkla ayrı taslaklara düştüyse, aşağıda o taslakların
+        başındaki kutucukları işaretleyip birleştirebilirsiniz (en az 2 taslak seçin) -- mahalle/cadde/ölçek önerisi
+        birleşmiş taslak için yeniden hesaplanır.</p>
+      <div style="margin-top:8px"><button type="submit" form="merge-form" class="btn-secondary">Seçili taslakları birleştir</button></div>
     </details>
     <form id="merge-form" action="{{ url_for('merge_groups') }}" method="post">
       <input type="hidden" name="session_id" value="{{ session_id }}">
@@ -41,18 +41,26 @@
   </div>
 
   {% for group in groups %}
-  <div class="group {% if loop.first %}top{% endif %}">
-    <h3>
-      {% if groups|length > 1 %}<input type="checkbox" name="merge_idx" value="{{ loop.index0 }}" form="merge-form" title="Birleştirmek için seç" style="vertical-align:middle; margin-right:6px">{% endif %}
-      Küme {{ loop.index }}
-      {% if loop.first %}<span class="badge">en büyük</span>{% endif %}
-      {% if not group.suggested_scale %}<span class="badge warn">hiçbir şablona sığmıyor</span>{% endif %}
-      {% if group.generated_info %}<span class="badge" style="background:#1a7a3c">✓ üretildi -- Sıra No {{ group.generated_info.sira_no }} ({{ group.generated_info.mahalle }})</span>{% endif %}
-    </h3>
+  <details class="group {% if loop.first %}top{% endif %}" {% if not group.generated_info %}open{% endif %}>
+    <summary style="cursor:pointer; list-style:none">
+      <h3 style="display:inline">
+        Ataşman {{ loop.index }} (taslak)
+        {% if loop.first and not group.generated_info %}<span class="badge">en büyük</span>{% endif %}
+        {% if not group.suggested_scale %}<span class="badge warn">hiçbir şablona sığmıyor</span>{% endif %}
+        {% if group.generated_info %}<span class="badge" style="background:#1a7a3c">✓ üretildi -- Sıra No {{ group.generated_info.sira_no }} ({{ group.generated_info.mahalle }})</span>{% endif %}
+      </h3>
+      {% if group.generated_info %}<span class="hint">-- bu taslak zaten üretildi, tekrar üretmek/düzeltmek isterseniz buraya tıklayıp açın</span>{% endif %}
+    </summary>
+    {% if groups|length > 1 and not group.generated_info %}
+    <p style="margin:10px 0 0"><label style="font-weight:normal">
+      <input type="checkbox" name="merge_idx" value="{{ loop.index0 }}" form="merge-form" style="vertical-align:middle; margin-right:6px">
+      Bu taslağı başka bir taslakla birleştir
+    </label></p>
+    {% endif %}
     <p class="meta">
       {{ group.piece_count }} parke parçası, {{ group.bordur_count }} bordür/oluk kenarı,
       toplam {{ group.total_area }} m²
-      {% if group.suggested_mahalle %} · mahalle: <strong>{{ group.suggested_mahalle }}</strong>{% endif %}
+      {% if group.suggested_mahalle %} · mahalle: <strong>{{ group.suggested_mahalle }}</strong>{% if group.mahalle_dist_m %} (~{{ group.mahalle_dist_m }} m, sınırın dışında -- kontrol edin){% endif %}{% endif %}
       {% if group.suggested_street %} · en yakın cadde/sokak: <strong>{{ group.suggested_street }}</strong> (~{{ group.street_dist_m }} m){% endif %}
       {% if group.suggested_kapi_no %} · en yakın kapı no: <strong>{{ group.suggested_kapi_no }}</strong> (~{{ group.kapi_no_dist_m }} m){% endif %}
       {% if group.suggested_scale %} · önerilen şablon: 1/{{ group.suggested_scale }}{% endif %}
@@ -60,10 +68,10 @@
 
     {% if not group.suggested_scale %}
     <div class="warning-box">
-      <p><strong>⚠ Bu küme hiçbir şablona sığmıyor</strong> -- en kaba şablonumuz 1/1000, bu
+      <p><strong>⚠ Bu taslak hiçbir şablona sığmıyor</strong> -- en kaba şablonumuz 1/1000, bu
         sınırın üzerinde (okunaksız olacağı için) otomatik üretim yapılmıyor. Bu alan muhtemelen
         birden fazla ayrı ataşman olmalı: yukarıdaki <strong>"Yakınlık mesafesi"</strong>ni
-        küçültüp <strong>"Grupları yeniden hesapla"</strong>ya basarak bu kümeyi daha küçük
+        küçültüp <strong>"Bu mesafeyle yeniden hesapla"</strong>ya basarak bu taslağı daha küçük
         parçalara ayırın.</p>
     </div>
     {% endif %}
@@ -76,8 +84,12 @@
       {% if group.unclassified_count %}
       {% set bordur_label = {'T4': 'Yeni Bordür', 'T5': 'Eski Bordür', 'T8': 'Oluk Taşı'} %}
       <div class="warning-box">
-        <p><strong>⚠ {{ group.unclassified_count }} parça için onayınız gerekiyor</strong> --
-          ataşmanı üretmeden önce aşağıdakileri kontrol edin:</p>
+        <p><strong>⚠ {{ group.unclassified_count }} parçanın kodu netlik istiyor</strong> --
+          bu taslaktaki {{ group.unclassified_count }} parçanın alanı/kenarları ne sayılacak
+          konusunda sistem emin olamadı (aşağıda her biri için nedeni açıklandı). Aşağıdaki
+          açılır listelerden HER biri için doğru seçeneği işaretleyin -- hiçbirini
+          değiştirmeden "Bu taslak için ataşman DXF'ini üret"e basarsanız, sistemin OTOMATİK
+          tespit ettiği (varsayılan seçili) türle üretilir.</p>
         {% for candidate in group.candidates %}
           {% if candidate.unclassified %}
           <div class="unclassified-piece">
@@ -136,8 +148,8 @@
       <label>Sıra No</label>
       <input type="text" name="sira_no" value="{{ group.suggested_sira_no or '' }}" required>
       <p class="hint">
-        {% if group.generated_info %}Bu küme daha önce {{ group.generated_info.sira_no }} sıra no ile üretildi -- tekrar üretirseniz üzerine yazılır. Farklı bir numara girebilirsiniz.
-        {% else %}İlk kümede girdiğiniz Sıra No'dan sonra, sıradaki kümeler için otomatik bir sonraki numara önerilir.{% endif %}
+        {% if group.generated_info %}Bu taslak daha önce {{ group.generated_info.sira_no }} sıra no ile üretildi -- tekrar üretirseniz üzerine yazılır. Farklı bir numara girebilirsiniz.
+        {% else %}İlk taslakta girdiğiniz Sıra No'dan sonra, sıradaki taslaklar için otomatik bir sonraki numara önerilir.{% endif %}
       </p>
 
       <label>İmalatın bitiş tarihi (gg/aa/yyyy)</label>
@@ -147,10 +159,10 @@
       <input type="text" name="aykome_no">
 
       <div style="margin-top:16px">
-        <button type="submit" {% if not group.suggested_scale %}disabled{% endif %}>Bu küme için ataşman DXF'i üret</button>
+        <button type="submit" {% if not group.suggested_scale %}disabled{% endif %}>Bu taslak için ataşman DXF'i üret</button>
       </div>
     </form>
-  </div>
+  </details>
   {% endfor %}
 
   <p class="sub"><a href="{{ url_for('index') }}">&larr; Yeniden dosya yükle</a></p>

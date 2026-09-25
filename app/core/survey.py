@@ -466,7 +466,7 @@ def _nearest_label(cx, cy, labels):
     return name, math.hypot(lx - cx, ly - cy)
 
 
-def describe_clusters(candidates, background_dxf_path=None, mahalle_dxf_path=None,
+def describe_clusters(candidates, background_dxf_path=None, mahalle_boundaries_path=None,
                        radius=None):
     """Cluster candidates spatially, then for each cluster: bbox, centroid,
     total area/bordür length, a suggested template scale, (if a background
@@ -495,7 +495,7 @@ def describe_clusters(candidates, background_dxf_path=None, mahalle_dxf_path=Non
     gruplar 1/250, bazıları 1/1000 çıkabilir, hepsi aynı anda.
     Returns a list of dicts, largest piece_count first."""
     clusters = cluster_candidates(candidates, radius=radius if radius is not None else CLUSTER_RADIUS_M)
-    mahalle_boundaries = load_mahalle_boundaries(mahalle_dxf_path) if mahalle_dxf_path else []
+    mahalle_boundaries = load_mahalle_boundaries(mahalle_boundaries_path) if mahalle_boundaries_path else []
 
     street_labels = []
     kapi_no_labels = []
@@ -531,7 +531,8 @@ def _group_dict(cl, street_labels, kapi_no_labels, mahalle_boundaries):
     bbox = _bbox(cl)
     street, street_dist = _nearest_label(*centroid, street_labels)
     kapi_no, kapi_no_dist = _nearest_label(*centroid, kapi_no_labels)
-    mahalle = find_mahalle(*centroid, mahalle_boundaries) if mahalle_boundaries else None
+    mahalle, mahalle_dist = (find_mahalle(*centroid, mahalle_boundaries)
+                              if mahalle_boundaries else (None, None))
     return {
         'candidates': cl,
         'piece_count': sum(1 for c in cl if c['parke_key']),
@@ -545,11 +546,12 @@ def _group_dict(cl, street_labels, kapi_no_labels, mahalle_boundaries):
         'suggested_kapi_no': kapi_no,
         'kapi_no_dist_m': round(kapi_no_dist, 1) if kapi_no_dist is not None else None,
         'suggested_mahalle': mahalle,
+        'mahalle_dist_m': round(mahalle_dist, 1) if mahalle_dist is not None else None,
         'suggested_scale': suggest_scale(bbox),
     }
 
 
-def describe_one_group(candidates, background_dxf_path=None, mahalle_dxf_path=None):
+def describe_one_group(candidates, background_dxf_path=None, mahalle_boundaries_path=None):
     """Faz 1.3: kullanıcı küme ekranında birden fazla kümeyi elle seçip
     "bunlar aslında aynı iş" diyerek birleştirdiğinde (bkz. main.py::
     /merge-groups), yeni birleşmiş kümenin bbox/mahalle/cadde/ölçek gibi
@@ -561,7 +563,7 @@ def describe_one_group(candidates, background_dxf_path=None, mahalle_dxf_path=No
     işlem olduğu için bu kabul edilebilir bir maliyet."""
     if not candidates:
         return None
-    mahalle_boundaries = load_mahalle_boundaries(mahalle_dxf_path) if mahalle_dxf_path else []
+    mahalle_boundaries = load_mahalle_boundaries(mahalle_boundaries_path) if mahalle_boundaries_path else []
     street_labels, kapi_no_labels = [], []
     if background_dxf_path:
         bbox = _bbox(candidates)

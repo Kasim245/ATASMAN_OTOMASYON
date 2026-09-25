@@ -24,7 +24,11 @@ DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__
 # district-wide mahalle boundary reference (67 mahalle, ~5.5MB) -- small
 # enough to bundle in the repo, unlike the 239MB KARATAY background file,
 # which stays a per-request user upload for now.
-MAHALLE_DXF_PATH = os.path.join(DATA_DIR, 'reference', 'mahalleler.dxf')
+# Faz 1.10: artık DXF değil, Konya Büyükşehir'in açık veri portalından
+# indirilen ve TM33'e dönüştürülen JSON (bkz. mahalle.py, scripts/
+# convert_mahalle_geojson.py) -- eski mahalleler.dxf sadece Karatay'ın 67
+# mahallesini içeriyordu ve bazı gerçek noktaları kapsamıyordu.
+MAHALLE_BOUNDARIES_PATH = os.path.join(DATA_DIR, 'reference', 'mahalleler_konya.json')
 
 # runtime state (not source data) -- accumulated ataşman records + unit-price
 # settings, used to compile the İcmal hakediş Excel. Kept outside data/ and
