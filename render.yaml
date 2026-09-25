@@ -9,7 +9,12 @@ services:
     env: python
     plan: starter
     buildCommand: "pip install -r requirements.txt"
-    startCommand: "gunicorn wsgi:app"
+    # Faz 1.11: varsayılan gunicorn worker timeout'u (30 saniye) büyük bir
+    # imar planı altlığı (arka plan DXF'i, yüzlerce MB olabiliyor) yüklenirken
+    # yetersiz kalıp "WORKER TIMEOUT" ile isteği öldürüyordu (kullanıcının
+    # gördüğü "Internal Server Error" beyaz ekranın gerçek nedeni buydu --
+    # Render loglarında doğrulandı). 300 saniyeye çıkarıldı.
+    startCommand: "gunicorn wsgi:app --timeout 300"
     envVars:
       # rastgele, güvenli bir değerle Render kendisi oluşturur -- elle
       # girmeye gerek yok
