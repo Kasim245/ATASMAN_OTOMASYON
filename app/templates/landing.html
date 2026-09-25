@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% block title %}Ataşman Otomasyonu &middot; Nordgis Mühendislik{% endblock %}
+{% block content %}
+  <div class="panel" style="text-align:center; padding:42px 24px;">
+    {% if has_logo %}
+    <img src="{{ url_for('static', filename='logo.png') }}" alt="Nordgis Mühendislik logosu" style="height:56px; margin-bottom:18px">
+    {% endif %}
+    <h1 style="border-bottom:none; padding-bottom:0; display:block;">Ataşman Otomasyonu</h1>
+    <p class="sub" style="max-width:540px; margin:0 auto 26px;">
+      Nordgis Mühendislik'in saha ekibinin GNSS ile ölçtüğü nokta ve DXF verilerinden otomatik
+      olarak ataşman (yapıldı/as-built) çizimi ve hakediş miktarı üreten iç yazılımı. Bu araç sadece
+      yetkili personelin kullanımı içindir.
+    </p>
+    <a href="{{ url_for('giris') }}" class="btn" style="text-decoration:none; padding:14px 30px;">Giriş Yap</a>
+  </div>
+
+  <div class="panel" id="yazilim-nedir">
+    <h3 style="margin-top:0">Yazılım Nedir?</h3>
+    <p>
+      Saha ekibinin GNSS ile ölçtüğü nokta dosyası ve NetCAD saha çizimlerini alıp; parke, bordür,
+      oluk ve minha (rögar) kalemlerini otomatik tanıyan, doğru ölçekte ataşman DXF'i üreten ve
+      hakediş İcmal tablosunu kendiliğinden dolduran bir üretim aracı. NetCAD'de elle yapılan
+      "alanı ölç, kenarına bordür/oluk paralel at, şablona yerleştir, İcmal'e işle" adımlarını
+      otomatikleştirerek zaman kazandırmak amacıyla geliştirildi.
+    </p>
+    <p class="hint" style="margin-bottom:0">
+      <a href="{{ url_for('hakkinda') }}#yazilim-nedir">Yazılım hakkında daha fazla bilgi →</a>
+    </p>
+  </div>
+
+  <div class="panel" id="hakkimizda">
+    <h3 style="margin-top:0">Hakkımızda</h3>
+    <p style="margin-bottom:0">
+      Nordgis Mühendislik Harita İnşaat, 2024 yılında Konya'da kurulan; etüt-proje, fotogrametri,
+      karayolu &amp; altyapı mühendisliği, kamulaştırma, CBS, imar planı, kadastro ve altyapı/asfalt
+      yol yapımı alanlarında hizmet veren çok disiplinli bir mühendislik firmasıdır.
+      <a href="{{ url_for('hakkinda') }}#hakkimizda">Firmamız ve hizmetlerimiz hakkında daha fazla bilgi →</a>
+    </p>
+  </div>
+{% endblock %}

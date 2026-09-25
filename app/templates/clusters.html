@@ -1,24 +1,50 @@
 {% extends "base.html" %}
 {% block content %}
   <h1>Tespit edilen işler</h1>
-  <p class="sub">Hakediş <strong>{{ hakedis_no }}</strong> · Dosyada {{ groups|length }} ayrı iş kümesi bulundu (yakınlıklarına göre gruplandı). Hangisi bu ataşmana aitse onun altındaki formu doldurup üretin.</p>
+  <p class="sub">Hakediş <strong>{{ hakedis_no }}</strong> · Dosyada {{ groups|length }} ayrı iş kümesi bulundu (otomatik olarak gruplandı, her grup kendi büyüklüğüne göre en ince şablonu kullanıyor -- 1/250, 1/500 ya da 1/1000). Hangisi bu ataşmana aitse onun altındaki formu doldurup üretin.</p>
 
   <div class="panel">
     <h3 style="margin-top:0">Gruplama yanlış mı görünüyor?</h3>
-    <p class="hint">Sistem, birbirine yakın parçaları otomatik olarak tek ataşman sayar (şu an <strong>{{ cluster_radius|int }} metre</strong> içindekiler birleşiyor). Farklı sokaklardaki parçalar yanlışlıkla tek grupta toplandıysa bu sayıyı küçültün; aslında tek iş olan bir grup gereksiz yere ikiye bölündüyse büyütün. Dosyaları yeniden yüklemenize gerek yok.</p>
-    <form action="{{ url_for('regroup') }}" method="post" style="display:flex; gap:10px; align-items:flex-end; flex-wrap:wrap">
+    {% if cluster_radius is none %}
+    <p class="hint">Sistem parçaları otomatik gruplar ve her grup için MÜMKÜN OLAN EN İNCE şablonu (1/250, 1/500 ya da 1/1000) seçer -- bazı gruplar 1/250, bazıları 1/1000 çıkabilir, hepsi aynı yüklemede olabilir, elle bir şey seçmenize gerek yok. Sonuç yine de yanlışsa (ör. iki farklı sokak tek grupta toplandıysa, ya da tek bir iş gereksiz yere ikiye bölündüyse) aşağıdan ileri düzey bir seçenekle elle müdahale edebilirsiniz.</p>
+    {% else %}
+    <p class="hint">Şu an <strong>{{ cluster_radius|int }} metre</strong> içindeki parçalar elle zorlanarak birleştiriliyor (ileri düzey mod). Otomatik (ölçek tabanlı) gruplamaya dönmek isterseniz aşağıdaki butonu kullanın.</p>
+    <form action="{{ url_for('regroup') }}" method="post" style="margin-bottom:14px">
       <input type="hidden" name="session_id" value="{{ session_id }}">
-      <div>
-        <label for="cluster_radius" style="margin-top:0">Yakınlık mesafesi (metre)</label>
-        <input type="text" id="cluster_radius" name="cluster_radius" value="{{ cluster_radius|int }}" style="max-width:140px">
-      </div>
-      <div style="margin-bottom:2px"><button type="submit">Grupları yeniden hesapla</button></div>
+      <input type="hidden" name="mode" value="auto">
+      <button type="submit" class="btn-secondary">&larr; Otomatik (ölçek tabanlı) gruplamaya dön</button>
     </form>
+    {% endif %}
+    <details {% if cluster_radius is not none %}open{% endif %}>
+      <summary class="hint" style="cursor:pointer">İleri düzey: elle bir yakınlık mesafesi girip zorla</summary>
+      <form action="{{ url_for('regroup') }}" method="post" style="display:flex; gap:10px; align-items:flex-end; flex-wrap:wrap; margin-top:10px">
+        <input type="hidden" name="session_id" value="{{ session_id }}">
+        <div>
+          <label for="cluster_radius" style="margin-top:0">Yakınlık mesafesi (metre)</label>
+          <input type="text" id="cluster_radius" name="cluster_radius" value="{{ cluster_radius|int if cluster_radius is not none else default_manual_radius|int }}" style="max-width:140px">
+        </div>
+        <div style="margin-bottom:2px"><button type="submit">Bu mesafeyle yeniden hesapla</button></div>
+      </form>
+    </details>
+    {% if groups|length > 1 %}
+    <details style="margin-top:10px">
+      <summary class="hint" style="cursor:pointer">İleri düzey: belirli kümeleri elle birleştir</summary>
+      <p class="hint" style="margin-top:10px">Aynı işin iki parçası yanlışlıkla ayrı kümelere düştüyse, aşağıda o kümelerin
+        başındaki kutucukları işaretleyip birleştirebilirsiniz (en az 2 küme seçin) -- mahalle/cadde/ölçek önerisi
+        birleşmiş küme için yeniden hesaplanır.</p>
+      <div style="margin-top:8px"><button type="submit" form="merge-form" class="btn-secondary">Seçili kümeleri birleştir</button></div>
+    </details>
+    <form id="merge-form" action="{{ url_for('merge_groups') }}" method="post">
+      <input type="hidden" name="session_id" value="{{ session_id }}">
+    </form>
+    {% endif %}
   </div>
 
   {% for group in groups %}
   <div class="group {% if loop.first %}top{% endif %}">
-    <h3>Küme {{ loop.index }}
+    <h3>
+      {% if groups|length > 1 %}<input type="checkbox" name="merge_idx" value="{{ loop.index0 }}" form="merge-form" title="Birleştirmek için seç" style="vertical-align:middle; margin-right:6px">{% endif %}
+      Küme {{ loop.index }}
       {% if loop.first %}<span class="badge">en büyük</span>{% endif %}
       {% if not group.suggested_scale %}<span class="badge warn">hiçbir şablona sığmıyor</span>{% endif %}
     </h3>
@@ -31,7 +57,17 @@
       {% if group.suggested_scale %} · önerilen şablon: 1/{{ group.suggested_scale }}{% endif %}
     </p>
 
-    <form action="{{ url_for('generate') }}" method="post">
+    {% if not group.suggested_scale %}
+    <div class="warning-box">
+      <p><strong>⚠ Bu küme hiçbir şablona sığmıyor</strong> -- en kaba şablonumuz 1/1000, bu
+        sınırın üzerinde (okunaksız olacağı için) otomatik üretim yapılmıyor. Bu alan muhtemelen
+        birden fazla ayrı ataşman olmalı: yukarıdaki <strong>"Yakınlık mesafesi"</strong>ni
+        küçültüp <strong>"Grupları yeniden hesapla"</strong>ya basarak bu kümeyi daha küçük
+        parçalara ayırın.</p>
+    </div>
+    {% endif %}
+
+    <form action="{{ url_for('generate') }}" method="post" class="js-heavy-form">
       <input type="hidden" name="session_id" value="{{ session_id }}">
       <input type="hidden" name="group_idx" value="{{ loop.index0 }}">
       <input type="hidden" name="template_scale" value="{{ group.suggested_scale or '' }}">
@@ -55,6 +91,17 @@
               <option value="keep" selected>Evet doğru -- bordür/oluk olarak bırak</option>
               {% for key, kind, label in manual_piece_choices if kind == 'area' %}
               <option value="{{ key }}:{{ kind }}">Hayır, aslında {{ label }} (tüm alanı say)</option>
+              {% endfor %}
+              <option value="skip">Bu parçayı atla (dikkate alma)</option>
+            </select>
+            {% elif candidate.verts|length == 2 %}
+            <label>Ne kodu ne çizgisi/alanı olan 2 nokta arasında bir hat (~{{ '%.1f'|format(candidate.approx_length or 0) }} m,
+              sahada X={{ '%.0f'|format(candidate.cx) }} Y={{ '%.0f'|format(candidate.cy) }} civarında) --
+              bu ne? Bordür/oluk mü, yoksa dikkate almayalım mı?</label>
+            <select name="piece_type_{{ loop.index0 }}" required>
+              <option value="" disabled selected>-- Seçiniz --</option>
+              {% for key, kind, label in manual_piece_choices if kind == 'length' %}
+              <option value="{{ key }}:{{ kind }}">{{ label }}</option>
               {% endfor %}
               <option value="skip">Bu parçayı atla (dikkate alma)</option>
             </select>

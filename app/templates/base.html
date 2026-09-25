@@ -41,6 +41,9 @@
            min-height: 46px; display: inline-flex; align-items:center; justify-content:center; }
     button:hover, .btn:hover { background: var(--accent-dark); }
     button:active, .btn:active { transform: translateY(1px); }
+    button:disabled, .btn:disabled { background: var(--muted); border-color: var(--muted);
+           opacity: .55; cursor: not-allowed; }
+    button:disabled:hover, .btn:disabled:hover { background: var(--muted); }
     .flash { background: #fbeee0; border: 1px solid #e8c9a0; color: #6b3f00; padding: 12px 14px;
              border-radius: 4px; margin-bottom: 16px; }
     .group { border: 1px solid var(--line); border-radius: 4px; padding: 14px; margin-bottom: 12px; background:#fff; }
@@ -104,6 +107,18 @@
     .preview-svg { width:100%; height:auto; display:block; }
     .preview-svg-wrap { max-width: 420px; margin: 0 auto; }
 
+    .login-hero { max-width: 400px; margin: 24px auto 0; }
+    .login-card { background: var(--panel); border: 1px solid var(--line); border-top: 4px solid var(--accent);
+           border-radius: 8px; padding: 34px 30px; box-shadow: 0 4px 20px rgba(20,20,20,.08); }
+    @media (max-width: 460px) { .login-card { padding: 26px 20px; } }
+
+    .chart-svg { width:100%; height:auto; display:block; }
+    .chart-wrap { overflow-x:auto; }
+    .view-toggle { display:flex; gap:8px; margin-bottom:14px; flex-wrap:wrap; }
+    .view-toggle a { background:#fff; border:1px solid var(--line); border-radius:999px; padding:8px 16px;
+           font-size:.85rem; font-weight:600; color:var(--muted); text-decoration:none; }
+    .view-toggle a.active { background:var(--accent); border-color:var(--accent-dark); color:var(--accent-ink); }
+
     .isler-edit { border-bottom:1px solid var(--line); padding:12px 0; }
     .isler-edit:last-child { border-bottom:none; }
     .isler-edit summary { cursor:pointer; font-weight:700; font-size:.92rem; list-style:none; }
@@ -135,6 +150,21 @@
     nav.top a:hover { color:var(--accent); }
     nav.top .who { color: var(--muted); font-weight:500; font-size:.82rem; padding:0 13px;
            border-left:1px solid var(--line); text-transform:none; letter-spacing:0; }
+
+    /* Faz 1.6: giriş yapmamış ziyaretçiler için üst menü -- nav.top'tan
+       AYRI bir class kullanıyor çünkü .top mobilde varsayılan olarak
+       gizlenip sadece hamburger menüsü açılınca görünüyor (bkz. aşağıdaki
+       680px media query); burada sadece 3 kısa link olduğu için hamburger'a
+       hiç gerek yok, dar ekranda da hep görünür kalıp alt satıra sarabiliyor. */
+    nav.nav-public { display:flex; gap:0; font-weight:600; align-items:center; flex-wrap:wrap; margin-left:auto; }
+    nav.nav-public a { color: var(--ink); text-decoration:none; font-size:.82rem; letter-spacing:.04em;
+           text-transform:uppercase; padding: 8px 13px; border-left:1px solid var(--line); white-space:nowrap; }
+    nav.nav-public a:first-child { border-left:none; }
+    nav.nav-public a:hover { color:var(--accent); }
+    nav.nav-public a.cta { color:var(--accent-dark); font-weight:800; }
+    @media (max-width: 680px) {
+      nav.nav-public { width:100%; margin-top:8px; margin-left:0; justify-content:flex-start; }
+    }
 
     .job-pill { display:flex; align-items:center; gap:7px; background:#f3e7d7; color:#6b4a26;
            border-radius:999px; padding:7px 15px 7px 12px; flex-shrink:0; max-width:260px; }
@@ -181,6 +211,44 @@
       .stat-num { font-size:1.3rem; }
       .stat-label { font-size:.7rem; }
     }
+
+    /* Faz 1.5: dosya işlenirken / ataşman üretilirken tam ekran bekleme
+       animasyonu -- amaç kullanıcının bu sırada başka bir yere tıklayıp
+       işlemi yarıda kesmesinin/tekrar tetiklemesinin önüne geçmek (bkz.
+       aşağıdaki <script>, form.js-heavy-form submit olduğunda açılıyor). */
+    .loading-overlay { display:none; position:fixed; inset:0; z-index:9999;
+           background:rgba(22,35,58,.94); align-items:center; justify-content:center;
+           padding:20px; }
+    .loading-overlay.active { display:flex; }
+    .loading-card { background:var(--panel); border-radius:8px; padding:28px 26px 24px;
+           max-width:380px; width:100%; text-align:center; box-shadow:0 10px 40px rgba(0,0,0,.35); }
+    .loading-scene { position:relative; height:76px; margin:0 -26px 18px; overflow:hidden;
+           background:linear-gradient(#f3f4f6,#eef0f2); }
+    .loading-ground { position:absolute; left:0; right:0; bottom:18px; height:2px; background:var(--line); }
+    .loading-icon { position:absolute; left:-15%; bottom:16px; width:34px; height:34px; color:var(--accent);
+           animation-name: loading-walk; animation-timing-function: linear; animation-iteration-count: infinite;
+           animation-fill-mode: backwards; }
+    .loading-icon-1 { animation-duration: 4.2s; animation-delay: 0s; }
+    .loading-icon-2 { animation-duration: 4.2s; animation-delay: 1.4s; color:var(--navy); }
+    .loading-icon-3 { animation-duration: 4.2s; animation-delay: 2.8s; color:#8a5a2b; opacity:.85; }
+    @keyframes loading-walk {
+      0%   { left:-15%; transform:translateY(0); }
+      48%  { transform:translateY(-4px); }
+      50%  { transform:translateY(0); }
+      100% { left:112%; transform:translateY(0); }
+    }
+    .loading-title { font-family:"Merriweather",Georgia,serif; font-weight:700; font-size:1.1rem; margin:0 0 6px; }
+    .loading-msg { color:var(--muted); font-size:.88rem; margin:0 0 16px; min-height:1.3em; }
+    .loading-bar { height:6px; border-radius:999px; background:var(--line); overflow:hidden; }
+    .loading-bar-fill { height:100%; width:40%; border-radius:999px; background:var(--accent);
+           animation: loading-bar-slide 1.4s ease-in-out infinite; }
+    @keyframes loading-bar-slide {
+      0%   { transform:translateX(-100%); }
+      100% { transform:translateX(250%); }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .loading-icon, .loading-bar-fill { animation: none; }
+    }
   </style>
 </head>
 <body>
@@ -224,9 +292,10 @@
       <input type="checkbox" id="nav-toggle" class="nav-toggle-cb">
       <label for="nav-toggle" class="nav-toggle-btn" aria-label="Menü">&#9776;</label>
       <nav class="top">
-        <a href="{{ url_for('panel') }}">Panel</a>
+        <a href="{{ url_for('panel') }}">Panelim</a>
         <a href="{{ url_for('index') }}">Ataşman Üret</a>
         <a href="{{ url_for('icmal_index') }}">İcmal</a>
+        <a href="{{ url_for('dosyalarim') }}">İndirilecek Dosyalar</a>
         {% if session.get('rol') == 'yonetici' %}
         <a href="{{ url_for('personel') }}">Personel</a>
         {% endif %}
@@ -234,6 +303,12 @@
         <a href="{{ url_for('hakkinda') }}">Hakkında</a>
         <span class="who">{{ session.get('ad_soyad') }}</span>
         <a href="{{ url_for('cikis') }}">Çıkış</a>
+      </nav>
+      {% else %}
+      <nav class="nav-public">
+        <a href="{{ url_for('hakkinda') }}#yazilim-nedir">Yazılım Nedir</a>
+        <a href="{{ url_for('hakkinda') }}#hakkimizda">Hakkımızda</a>
+        <a href="{{ url_for('giris') }}" class="cta">Giriş Yap</a>
       </nav>
       {% endif %}
     </div>
@@ -251,8 +326,77 @@
         <div class="footer-meta">Feritpaşa Mahallesi Malazgirt Sokak No:13/401, Selçuklu/Konya</div>
         <div class="footer-meta">0531 379 96 55 &middot; <a href="https://www.nordgismuhendislik.com" target="_blank" rel="noopener">nordgismuhendislik.com</a></div>
       </div>
-      <div class="footer-right">Ataşman Otomasyonu &middot; Faz 1</div>
+      <div class="footer-right">Ataşman Otomasyonu &middot; Faz 1.7</div>
     </div>
   </footer>
+
+  <div id="loading-overlay" class="loading-overlay" role="status" aria-live="polite" aria-hidden="true">
+    <div class="loading-card">
+      <div class="loading-scene">
+        <div class="loading-ground"></div>
+        <!-- Total station: sehpa (tripod) + gövde + dürbün merceği -->
+        <svg class="loading-icon loading-icon-1" viewBox="0 0 40 40" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M20 24 L11 34 M20 24 L20 34 M20 24 L29 34"></path>
+          <rect x="14" y="12" width="12" height="10" rx="2"></rect>
+          <circle cx="26" cy="17" r="2.6"></circle>
+          <path d="M17 12 V8"></path>
+        </svg>
+        <!-- GPS rover: şaft + anten diski + el kontrolcüsü -->
+        <svg class="loading-icon loading-icon-2" viewBox="0 0 40 40" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M20 34 V14"></path>
+          <ellipse cx="20" cy="10" rx="7" ry="3.4"></ellipse>
+          <path d="M20 10 v-2.5"></path>
+          <rect x="24" y="20" width="7" height="9" rx="1.4"></rect>
+        </svg>
+        <!-- Nivo (otomatik nivelman aleti): sehpa + yatay gövde + mercek -->
+        <svg class="loading-icon loading-icon-3" viewBox="0 0 40 40" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M20 25 L12 34 M20 25 L20 34 M20 25 L28 34"></path>
+          <rect x="11" y="17" width="18" height="7" rx="3"></rect>
+          <circle cx="27" cy="20.5" r="1.8"></circle>
+        </svg>
+      </div>
+      <p class="loading-title">Ataşman hazırlanıyor&hellip;</p>
+      <p class="loading-msg" id="loading-msg">Dosyalar okunuyor&hellip;</p>
+      <div class="loading-bar"><div class="loading-bar-fill"></div></div>
+    </div>
+  </div>
+  <script>
+    (function () {
+      // Faz 1.5: "ataşman yap" gibi sunucuda biraz süren bir işlemi
+      // tetikleyen formlar (bkz. upload.html, reconstruct.html, clusters.html
+      // -- hepsi class="js-heavy-form" ile işaretli) submit edildiğinde tam
+      // ekran bir bekleme animasyonu gösterip o formun düğmelerini devre dışı
+      // bırakır. Amaç: kullanıcı işlem sürerken başka bir yere tıklayıp
+      // işlemi karıştırmasın / aynı formu ikinci kez göndermesin. Sunucu
+      // normal HTML form submit'i ile cevap verince (yeni sayfa yüklenince)
+      // bu katman zaten ekrandan kalkmış olur -- ayrıca gizlemeye gerek yok.
+      var overlay = document.getElementById('loading-overlay');
+      var msgEl = document.getElementById('loading-msg');
+      if (!overlay) { return; }
+      var messages = [
+        'Dosyalar okunuyor…',
+        'Nokta kodları eşleştiriliyor…',
+        'Bordür ve oluk hatları birleştiriliyor…',
+        'Parçalar kümeleniyor…',
+        'Şablon ölçeği hesaplanıyor…',
+        'Ataşman çizimi hazırlanıyor…'
+      ];
+      var forms = document.querySelectorAll('form.js-heavy-form');
+      for (var i = 0; i < forms.length; i++) {
+        forms[i].addEventListener('submit', function () {
+          var btns = this.querySelectorAll('button');
+          for (var j = 0; j < btns.length; j++) { btns[j].disabled = true; }
+          overlay.classList.add('active');
+          overlay.setAttribute('aria-hidden', 'false');
+          var idx = 0;
+          if (msgEl) { msgEl.textContent = messages[0]; }
+          setInterval(function () {
+            idx = (idx + 1) % messages.length;
+            if (msgEl) { msgEl.textContent = messages[idx]; }
+          }, 2200);
+        });
+      }
+    })();
+  </script>
 </body>
 </html>

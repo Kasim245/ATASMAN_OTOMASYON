@@ -1,16 +1,31 @@
 {% extends "base.html" %}
 {% block content %}
-  <h1>Kodu var, çizgisi yok</h1>
+  <h1>Kodu var, çizgisi yok / kodu da çizgisi de yok</h1>
   <p class="sub">Hakediş <strong>{{ hakedis_no }}</strong> · Nokta dosyanızda kod girilmiş ama saha DXF'inde hiçbir
-    çizgide kullanılmamış {{ suggestions|length }} nokta grubu bulundu. Sahada bu noktalar kapatılarak ölçülmüş
-    olmalı, ama NetCAD'de alan/çizgi çizme adımı hiç yapılmamış görünüyor. Aşağıda, ardışık nokta numaralarına göre
-    bunları nasıl birleştirebileceğimizi öneriyoruz — her biri için önizlemeye bakıp onaylayın ya da atlayın.</p>
+    çizgide kullanılmamış nokta grupları bulundu; ayrıca ne kodu ne saha DXF'inde bir çizgisi/alanı olan (eskiden
+    "muhtemelen ilgisiz/referans nokta" sayılıp sessizce yok sayılan) nokta grupları da aşağıda ayrıca listeleniyor.
+    Sahada bunlar gerçekten ölçülmüş olmalı, ama NetCAD'de alan/çizgi çizme adımı ya da kod girme adımı hiç
+    yapılmamış görünüyor. Aşağıda, ardışık nokta numaralarına göre bunları nasıl birleştirebileceğimizi öneriyoruz —
+    her biri için önizlemeye bakıp onaylayın ya da atlayın.</p>
 
-  <form action="{{ url_for('reconstruct') }}" method="post">
+  <form action="{{ url_for('reconstruct') }}" method="post" class="js-heavy-form">
     <input type="hidden" name="session_id" value="{{ session_id }}">
 
     {% for suggestion, preview in zip(suggestions, previews) %}
     <div class="group">
+      {% if suggestion.codeless %}
+      <h3>Grup {{ loop.index }} — nokta {{ suggestion.ids[0] }} ile {{ suggestion.ids[-1] }} arası
+        ({{ suggestion.ids|length }} nokta) <span style="color:#b45309">— kod da yok, çizgi de yok</span></h3>
+      <div class="preview-svg-wrap" style="margin:10px 0">{{ preview|safe }}</div>
+      <p class="meta">Bu noktaların hiçbirinde kod girilmemiş VE saha DXF'inde bunları kullanan hiçbir çizgi/alan
+        yok — ne olduğu koddan da çizimden de belli değil. Muhtemelen ilgisiz/referans noktalar olabilir, ama
+        kodlaması unutulmuş bir <strong>bordür, oluk ya da parke</strong> parçası da olabilir. Dahil ederseniz, bir
+        sonraki ekranda (küme ekranı) ne olduğunu (bordür/oluk/parke/atla) ayrıca soracağız.</p>
+      <label>
+        <input type="checkbox" name="confirm_{{ loop.index0 }}" value="1" style="width:auto;display:inline-block;margin-right:8px">
+        Bunu da dahil et, ne olduğunu bir sonraki ekranda soracağım
+      </label>
+      {% else %}
       <h3>Grup {{ loop.index }} — nokta {{ suggestion.ids[0] }} ile {{ suggestion.ids[-1] }} arası
         ({{ suggestion.ids|length }} nokta)</h3>
       <div class="preview-svg-wrap" style="margin:10px 0">{{ preview|safe }}</div>
@@ -20,6 +35,7 @@
         <input type="checkbox" name="confirm_{{ loop.index0 }}" value="1" checked style="width:auto;display:inline-block;margin-right:8px">
         Evet, bu {{ suggestion.ids|length }} noktayı numara sırasına göre birleştir (bordür/oluk paralellerini de otomatik at)
       </label>
+      {% endif %}
     </div>
     {% endfor %}
 

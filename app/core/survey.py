@@ -29,6 +29,7 @@ import math
 from .dxf_io import load_dxf_pairs, parse_entities, g, lwpolyline_vertices
 from .points import (
     load_ncn, match_points_to_ncn, classify_polygon, find_bordur_edges, find_orphan_runs,
+    find_codeless_orphan_runs,
 )
 from .geometry import area2d, dist, offset_edge_outward, point_in_polygon
 from .config import (
@@ -44,17 +45,26 @@ from .mahalle import load_mahalle_boundaries, find_mahalle
 # keeping every other street's pieces separate there (nearest piece
 # belonging to a different job sits ~190m+ away).
 #
-# Confirmed against a second real batch (Necmetin, Emirgazi Mh., 53 pieces
-# across ~3 visually distinct street segments) that NO single fixed radius
-# can be correct for every batch: Akabe's one legitimate job needs >=95m of
-# single-link tolerance to stay merged, while Necmetin's 3 separate jobs
-# only separate correctly below ~80m -- tightening the default to fix one
-# real file silently breaks the other. So this constant is a starting GUESS
-# only; main.py's /regroup route lets the user re-cluster the same upload
-# with a different radius from the clusters.html screen when the guess is
-# visibly wrong (e.g. one giant group spanning several streets, or a real
-# single job split into too many pieces), without re-uploading anything.
-CLUSTER_RADIUS_M = 150.0
+# Confirmed against a second real batch (Necmetin, Emirgazi Mh.) that NO
+# single fixed radius can be correct for every batch, so this constant is a
+# starting GUESS only -- main.py's /regroup route lets the user re-cluster
+# the same upload with a different radius from the clusters.html screen when
+# the guess is visibly wrong (e.g. one giant group spanning several streets,
+# or a real single job split into too many pieces), without re-uploading
+# anything.
+#
+# Faz 1.1: the previous default of 150.0 was demonstrably too loose -- it
+# collapsed the real necmetin upload's 70 pieces into a single cluster
+# (should have been several separate ataşman jobs). Re-measured against
+# both real fixtures on 2026-09-24: Akabe's one legitimate 7-piece group
+# needs >=95m to stay merged (unchanged finding); necmetin cleanly splits
+# into 3 groups (sizes 1/21/48) anywhere in the 85-95m range, and further
+# fragments below 80m without a clear "correct" split point of its own. So
+# 95.0 is the tightest value that keeps Akabe correct while giving necmetin
+# a real, useful split instead of one giant blob -- not a proof that 95m is
+# universally right, just a better starting guess than 150m. /regroup
+# remains the mitigation when a batch still needs a different radius.
+CLUSTER_RADIUS_M = 95.0
 
 
 def _build_candidate(verts, ids, pts):
@@ -109,9 +119,16 @@ def _build_candidate(verts, ids, pts):
     if not parke_key:
         review_reason = 'full_bordur_no_parke' if piece_bordur else 'no_code'
     unclassified = review_reason is not None
+    # Faz 1.4: 2 noktalık bir grup (ör. kodsuz+çizgisiz bir öneri) "kapalı
+    # şekil" değil, düz bir hat -- area2d() bunun için hep 0 döner (bkz.
+    # geometry.area2d), bu yüzden clusters.html'de "~0.0 m² alanlı kapalı
+    # şekil" gibi yanıltıcı bir metin göstermek yerine gerçek uzunluğu
+    # gösterebilmek için burada ayrıca hesaplanıp saklanıyor.
+    approx_length = dist(verts[0], verts[1]) if len(verts) == 2 else None
     candidate = {
         'verts': verts,
         'area': area2d(verts) if (parke_key or unclassified) else 0.0,
+        'approx_length': approx_length,
         'parke_key': parke_key,
         'piece_bordur': piece_bordur,
         'cx': cx, 'cy': cy,
@@ -289,17 +306,36 @@ def build_reconstruction_suggestions(pts, consumed_ids):
     gösterip onay/atla seçimi aldırır (bkz. reconstruct.html, /reconstruct),
     sonra sadece onaylananlar gerçek candidates listesine katılır.
 
+    Faz 1.4: AYRICA kodu da tamamen boş VE hiçbir çizgide kullanılmamış nokta
+    gruplarını da (find_codeless_orphan_runs) arar -- ör. 193,194,195,196
+    gibi ardışık noktaların ne bir kodu ne bir DXF alanı/çizgisi olması.
+    Eskiden bunlar "muhtemelen ilgisiz/referans nokta" varsayımıyla tamamen
+    sessizce elenirdi; artık bunlar da kullanıcıya "bu ne, bordür mü?" diye
+    sorulmak üzere öneri listesine ekleniyor -- 'codeless': True ile
+    işaretlenip kodlu önerilerden ayırt ediliyor (reconstruct.html'de farklı
+    başlık/metinle gösteriliyor, çünkü kodlu öneride en azından hangi tür
+    olduğu (bordür/oluk/parke) koddan tahmin edilebilirken kodsuzda hiç
+    tahmin yok -- kullanıcı sıfırdan seçmeli). Onaylanınca akış aynı: mevcut
+    _build_candidate + classify_unclassified_piece (kodsuz parça onay
+    ekranı) üzerinden bordür/oluk/parke/atla seçilir.
+
     Her öneri: {'ids': [1,2,...,15], 'candidate': {...} veya None (poligon
-    tamamen minha kodluysa -- bu, tek başına anlamsız olduğu için atlanır)}.
+    tamamen minha kodluysa -- bu, tek başına anlamsız olduğu için atlanır),
+    'codeless': True/False}.
     """
-    runs = find_orphan_runs(pts, consumed_ids)
     suggestions = []
-    for run in runs:
+    for run in find_orphan_runs(pts, consumed_ids):
         verts = [pts[i][:2] for i in run]
         candidate, minha_info = _build_candidate(verts, run, pts)
         if candidate is None:
             continue  # tamamen minha kodlu bir grup tek başına anlamlı değil
-        suggestions.append({'ids': run, 'candidate': candidate})
+        suggestions.append({'ids': run, 'candidate': candidate, 'codeless': False})
+    for run in find_codeless_orphan_runs(pts, consumed_ids):
+        verts = [pts[i][:2] for i in run]
+        candidate, minha_info = _build_candidate(verts, run, pts)
+        if candidate is None:
+            continue
+        suggestions.append({'ids': run, 'candidate': candidate, 'codeless': True})
     return suggestions
 
 
@@ -323,8 +359,16 @@ def classify_unclassified_piece(candidate, choice_key, choice_kind):
     else:
         offset_m = OLUK_OFFSET_M if choice_key == 'T8' else BORDUR_OFFSET_M
         n = len(verts)
+        # n==2 (ör. Faz 1.4'te eklenen kodsuz+çizgisiz 2 noktalık bir öneri,
+        # veya herhangi bir çift-noktalı parça): tek bir kenar var, iki uç
+        # nokta arasında gidiş VE dönüş -- döngü kapalı bir halkaymış gibi
+        # `range(n)` ile gezilirse (k=0: p0->p1, k=1: p1->p0 mod n) aynı kenar
+        # iki kez -- ters yönde de olsa -- eklenip TOT[bkey]'de uzunluk
+        # ikiye katlanırdı. Kapalı bir halka değil, tek bir açık kenar
+        # olduğu için sadece bir kez ekleniyor.
+        n_edges = 1 if n == 2 else n
         edges = []
-        for k in range(n):
+        for k in range(n_edges):
             p1, p2 = verts[k], verts[(k + 1) % n]
             p1o, p2o = offset_edge_outward(p1, p2, (cx, cy), offset_m)
             edges.append((choice_key, p1, p2, dist(p1, p2), p1o, p2o))
@@ -392,6 +436,29 @@ def suggest_scale(bbox, margin=1.0):
     return best
 
 
+# Faz 1.2: DENENDİ VE GERÇEK VERİYLE ÇÜRÜTÜLDÜ -- "sadece bbox mevcut en
+# kaba şablona (1/1000) sığıyor mu" kıstasına göre (bir yakınlık/mesafe
+# kavramı hiç kullanmadan) MST ile birleştiren bir cluster_candidates_by_scale()
+# denendi, çünkü kullanıcı "yakınlık meselesine girmeyelim" dedi. Necmetin
+# dosyasıyla test edilince bu YANLIŞ ÇIKTI: dosyadaki 3 ayrı, gerçek sokağın
+# TOPLAM bbox'ı (509m x 345m) tek bir 1/1000 çerçevesine (703m x 818m)
+# rahatça sığıyor -- yani "bbox çerçeveye sığıyor mu" sorusu tek başına 3
+# ayrı işi TEK bir dev ataşmana geri birleştiriyordu (tam olarak Issue #1'in
+# kendisi). Bu yüzden bir miktar "bunlar gerçekten birbirine yakın/bağlı mı"
+# sinyali OLMADAN doğru gruplama matematiksel olarak mümkün değil -- iki
+# gerçek dosyada (Akabe, necmetin) IQR/medyan tabanlı otomatik eşik denemeleri
+# de tutarsız çıktı (bkz. bu fonksiyonun git geçmişindeki deneme). Bu yüzden
+# aşağıdaki cluster_candidates() + CLUSTER_RADIUS_M (deneyle doğrulanmış,
+# her iki gerçek dosyada da doğru ayrımı veren 95m) hâlâ kullanılıyor -- ama
+# artık kullanıcıya "yakınlık mesafesi" olarak gösterilmiyor: otomatik/dahili
+# bir sinyal, kullanıcının normalde hiç görmediği/ayarlamadığı bir şey (bkz.
+# main.py/clusters.html -- elle mesafe girme sadece "ileri düzey" bir kaçış
+# yolu). Her grubun HANGİ ÖLÇEĞİ (1/250, 1/500, 1/1000) kullanacağı ise zaten
+# tamamen otomatik ve gruplamadan bağımsız: suggest_scale(), her grubun kendi
+# bbox'ına göre en ince sığanı seçiyor -- kullanıcının istediği "bazı gruplar
+# 1/250, bazıları 1/500, bazıları 1/1000 olsun" davranışı zaten bu adımda var.
+
+
 def _nearest_label(cx, cy, labels):
     if not labels:
         return None, None
@@ -400,7 +467,7 @@ def _nearest_label(cx, cy, labels):
 
 
 def describe_clusters(candidates, background_dxf_path=None, mahalle_dxf_path=None,
-                       radius=CLUSTER_RADIUS_M):
+                       radius=None):
     """Cluster candidates spatially, then for each cluster: bbox, centroid,
     total area/bordür length, a suggested template scale, (if a background
     DXF is given) the nearest street name AND nearest kapı no (bina numarası)
@@ -413,8 +480,21 @@ def describe_clusters(candidates, background_dxf_path=None, mahalle_dxf_path=Non
     point-in-polygon test, not a nearest-label guess: the mahalle name text
     can sit anywhere inside its own large, irregular polygon, nowhere near
     any particular street in it).
+
+    Faz 1.2: radius=None (varsayılan, normal kullanım) -- deneyle doğrulanmış
+    dahili mesafe sinyali (CLUSTER_RADIUS_M) otomatik kullanılır; kullanıcıya
+    "yakınlık mesafesi" olarak hiç gösterilmiyor/sorulmuyor (bkz. bu modülün
+    yukarıdaki "DENENDİ VE ÇÜRÜTÜLDÜ" notu -- salt bbox/ölçek uyumuna bakan,
+    mesafe kavramı hiç kullanmayan bir yöntem gerçek veriyle yanlış çıktı).
+    radius bir sayı olarak verilirse (main.py::/regroup'un "ileri düzey" elle
+    geçersiz kılma seçeneği), o değer kullanılır -- otomatik sonuç gerçekten
+    yanlışsa (örn. iki farklı sokağı tek grupta topluyorsa) elle müdahale
+    imkânı olarak. Her iki durumda da her grubun hangi ÖLÇEĞİ (1/250, 1/500,
+    1/1000) kullanacağı ayrı ve tamamen otomatik bir adım: suggest_scale(),
+    grubun kendi bbox'ına göre en ince sığanı seçiyor -- aynı yüklemede bazı
+    gruplar 1/250, bazıları 1/1000 çıkabilir, hepsi aynı anda.
     Returns a list of dicts, largest piece_count first."""
-    clusters = cluster_candidates(candidates, radius=radius)
+    clusters = cluster_candidates(candidates, radius=radius if radius is not None else CLUSTER_RADIUS_M)
     mahalle_boundaries = load_mahalle_boundaries(mahalle_dxf_path) if mahalle_dxf_path else []
 
     street_labels = []
@@ -439,29 +519,155 @@ def describe_clusters(candidates, background_dxf_path=None, mahalle_dxf_path=Non
                 elif layer[0] == 'Z_KAPI_NO':
                     kapi_no_labels.append(entry)
 
-    out = []
-    for cl in clusters:
-        centroid = (sum(c['cx'] for c in cl) / len(cl), sum(c['cy'] for c in cl) / len(cl))
-        bbox = _bbox(cl)
-        street, street_dist = _nearest_label(*centroid, street_labels)
-        kapi_no, kapi_no_dist = _nearest_label(*centroid, kapi_no_labels)
-        mahalle = find_mahalle(*centroid, mahalle_boundaries) if mahalle_boundaries else None
-        out.append({
-            'candidates': cl,
-            'piece_count': sum(1 for c in cl if c['parke_key']),
-            'bordur_count': sum(1 for c in cl if c['piece_bordur']),
-            'unclassified_count': sum(1 for c in cl if c.get('unclassified')),
-            'total_area': round(sum(c['area'] for c in cl if c['parke_key']), 2),
-            'centroid': centroid,
-            'bbox': bbox,
-            'suggested_street': street,
-            'street_dist_m': round(street_dist, 1) if street_dist is not None else None,
-            'suggested_kapi_no': kapi_no,
-            'kapi_no_dist_m': round(kapi_no_dist, 1) if kapi_no_dist is not None else None,
-            'suggested_mahalle': mahalle,
-            'suggested_scale': suggest_scale(bbox),
-        })
+    out = [_group_dict(cl, street_labels, kapi_no_labels, mahalle_boundaries) for cl in clusters]
     return sorted(out, key=lambda g: -g['piece_count'])
+
+
+def _group_dict(cl, street_labels, kapi_no_labels, mahalle_boundaries):
+    """Bir tek kümenin (candidates listesi) gösterim sözlüğünü üretir --
+    describe_clusters()'ın ana döngüsünden ve (Faz 1.3) describe_one_group()'tan
+    ortak kullanılıyor, ikisi de aynı alanları aynı şekilde hesaplasın diye."""
+    centroid = (sum(c['cx'] for c in cl) / len(cl), sum(c['cy'] for c in cl) / len(cl))
+    bbox = _bbox(cl)
+    street, street_dist = _nearest_label(*centroid, street_labels)
+    kapi_no, kapi_no_dist = _nearest_label(*centroid, kapi_no_labels)
+    mahalle = find_mahalle(*centroid, mahalle_boundaries) if mahalle_boundaries else None
+    return {
+        'candidates': cl,
+        'piece_count': sum(1 for c in cl if c['parke_key']),
+        'bordur_count': sum(1 for c in cl if c['piece_bordur']),
+        'unclassified_count': sum(1 for c in cl if c.get('unclassified')),
+        'total_area': round(sum(c['area'] for c in cl if c['parke_key']), 2),
+        'centroid': centroid,
+        'bbox': bbox,
+        'suggested_street': street,
+        'street_dist_m': round(street_dist, 1) if street_dist is not None else None,
+        'suggested_kapi_no': kapi_no,
+        'kapi_no_dist_m': round(kapi_no_dist, 1) if kapi_no_dist is not None else None,
+        'suggested_mahalle': mahalle,
+        'suggested_scale': suggest_scale(bbox),
+    }
+
+
+def describe_one_group(candidates, background_dxf_path=None, mahalle_dxf_path=None):
+    """Faz 1.3: kullanıcı küme ekranında birden fazla kümeyi elle seçip
+    "bunlar aslında aynı iş" diyerek birleştirdiğinde (bkz. main.py::
+    /merge-groups), yeni birleşmiş kümenin bbox/mahalle/cadde/ölçek gibi
+    bilgilerini describe_clusters() ile AYNI mantıkla tek bir candidates
+    listesi için yeniden hesaplar. describe_clusters()'tan farklı olarak
+    (orada verimlilik için TÜM kümelerin ortak bbox'ı için TEK bir art alan
+    taraması yapılıyor) burada sadece bu TEK birleşmiş kümenin kendi bbox'ı
+    + payı için ayrı bir tarama yapılıyor -- nadir/istek üzerine çalışan bir
+    işlem olduğu için bu kabul edilebilir bir maliyet."""
+    if not candidates:
+        return None
+    mahalle_boundaries = load_mahalle_boundaries(mahalle_dxf_path) if mahalle_dxf_path else []
+    street_labels, kapi_no_labels = [], []
+    if background_dxf_path:
+        bbox = _bbox(candidates)
+        pad = 300.0
+        labels_raw = extract_background(background_dxf_path,
+                                         bbox[0] - pad, bbox[1] + pad,
+                                         bbox[2] - pad, bbox[3] + pad,
+                                         interest_layers={'Z_YOL_ADI', 'Z_KAPI_NO'})
+        for ent in labels_raw:
+            layer = [v for c, v in ent if c == '8']
+            val = [v for c, v in ent if c == '1']
+            x = [v for c, v in ent if c == '10']
+            y = [v for c, v in ent if c == '20']
+            if layer and val and x and y:
+                entry = (val[0], float(x[0]), float(y[0]))
+                if layer[0] == 'Z_YOL_ADI':
+                    street_labels.append(entry)
+                elif layer[0] == 'Z_KAPI_NO':
+                    kapi_no_labels.append(entry)
+    return _group_dict(candidates, street_labels, kapi_no_labels, mahalle_boundaries)
+
+
+def merge_bordur_chains(bordur_lines, tol=0.05):
+    """Faz 1.1 (Issue #4): aynı bkey'e (T4/T5/T8) ait, birbirine komşu
+    parke parçalarından gelen ayrı bordür/oluk kenarlarını -- kullanıcının
+    2. resimde gösterdiği gibi, parkelere paralel ama birbirinden kopuk kısa
+    çizgiler yerine -- TEK bir kesintisiz hatta zincirler.
+
+    Zincirleme, kenarların HAM (ofsetsiz) uç noktalarına (p1/p2) bakarak
+    yapılır -- iki kenar, ham uçları `tol` metre içinde çakışıyorsa aynı
+    hattın parçası sayılır (komşu parçaların paylaştığı gerçek saha noktası).
+    Ama çizilecek olan, o kenarların OFSETLİ (p1o/p2o) konumu -- bordür taşının
+    kendi genişliği kadar dışa kaydırılmış hali (bkz. config.py::BORDUR_OFFSET_M/
+    OLUK_OFFSET_M) -- sırayla art arda eklenerek tek bir sürekli polyline
+    oluşturuluyor. Ödeme miktarı (TOT[bkey]) buradan HİÇ etkilenmiyor: her
+    kenarın uzunluğu zaten totals_from_candidates() içinde ayrı ayrı
+    toplanmış durumda, birleştirme sadece ÇİZİM için.
+
+    Farklı bkey'ler asla birleştirilmiyor (T4 ile T5 fiziksel olarak farklı
+    malzeme). Dallanma/kavşak gibi 2'den fazla kenarın aynı noktada
+    birleştiği nadir durumlarda basitçe ilk uygun eşleşme izlenir -- kusursuz
+    bir topoloji çözümü değil, ama gerçek saha verisinde (bkz.
+    _standalone_line_candidates docstring'i) bordür/oluk hatları neredeyse
+    hep düz bir zincir, kavşak değil.
+
+    Dönüş: {bkey: [ [ (x,y), ... ] , ... ]} -- her bkey için, çizilecek
+    zincirlerin (her biri en az 2 noktalı) listesi. Zincirlenecek komşusu
+    bulunamayan tek bir kenar, tek başına 2 noktalı bir "zincir" olarak
+    döner -- eskisi gibi (tek bir LINE yerine artık 2 noktalı bir
+    LWPOLYLINE, görsel olarak aynı)."""
+    def keyf(p):
+        return (round(p[0] / tol), round(p[1] / tol))
+
+    by_bkey = collections.defaultdict(list)
+    for bkey, p1, p2, d, p1o, p2o in bordur_lines:
+        by_bkey[bkey].append((p1, p2, p1o, p2o))
+
+    result = {}
+    for bkey, edges in by_bkey.items():
+        endpoint_map = collections.defaultdict(list)
+        for idx, (p1, p2, p1o, p2o) in enumerate(edges):
+            endpoint_map[keyf(p1)].append(idx)
+            endpoint_map[keyf(p2)].append(idx)
+
+        used = [False] * len(edges)
+        chains = []
+        for start in range(len(edges)):
+            if used[start]:
+                continue
+            used[start] = True
+            p1, p2, p1o, p2o = edges[start]
+            chain = collections.deque([p1o, p2o])
+
+            # ileri yönde (p2 ucundan) zincirle
+            raw_end = p2
+            while True:
+                nxt = next((i for i in endpoint_map[keyf(raw_end)] if not used[i]), None)
+                if nxt is None:
+                    break
+                used[nxt] = True
+                q1, q2, q1o, q2o = edges[nxt]
+                if keyf(q1) == keyf(raw_end):
+                    chain.append(q2o)
+                    raw_end = q2
+                else:
+                    chain.append(q1o)
+                    raw_end = q1
+
+            # geri yönde (p1 ucundan) zincirle
+            raw_end = p1
+            while True:
+                nxt = next((i for i in endpoint_map[keyf(raw_end)] if not used[i]), None)
+                if nxt is None:
+                    break
+                used[nxt] = True
+                q1, q2, q1o, q2o = edges[nxt]
+                if keyf(q1) == keyf(raw_end):
+                    chain.appendleft(q2o)
+                    raw_end = q2
+                else:
+                    chain.appendleft(q1o)
+                    raw_end = q1
+
+            chains.append(list(chain))
+        result[bkey] = chains
+    return result
 
 
 def totals_from_candidates(candidates):

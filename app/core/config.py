@@ -1,14 +1,21 @@
 """Per-template-scale constants and the shared code/material-item tables.
 
 Per the user: there's only ever one physical ataşman sheet layout (the CIZPEN
-title-block frame we have from the 250-scale reference) -- "1/1000", "1/1500",
-"1/2000" don't need their own blank DXF files at all, they're the same sheet
-printed at a coarser plot scale, so the SAME template geometry just covers
-more real-world ground per drawing unit. Concretely: the 250 template's
-'scale' (4.0 m per template-local unit) corresponds to plot scale 1/250, so
-1/1000 uses the identical file with scale = 4.0 * (1000/250) = 16.0, and so
-on -- everything else (work_area_local, placeholder positions/text) is
-unchanged, because it's literally the same drawing.
+title-block frame we have from the 250-scale reference) -- a coarser plot
+scale doesn't need its own blank DXF file, it's the same sheet printed at a
+coarser plot scale, so the SAME template geometry just covers more
+real-world ground per drawing unit. Concretely: the 250 template's 'scale'
+(4.0 m per template-local unit) corresponds to plot scale 1/250, so 1/1000
+uses the identical file with scale = 4.0 * (1000/250) = 16.0 -- everything
+else (work_area_local, placeholder positions/text) is unchanged, because
+it's literally the same drawing.
+
+Faz 1.1: per the user, 1/1000 is a hard ceiling -- a survey batch too large
+even for that must never be silently drawn at some coarser, unreadable
+scale. So TEMPLATES only ever offers 250 and 1000 (see below); anything
+bigger is rejected upstream by survey.py::suggest_scale() returning None,
+which main.py/clusters.html surface as a "doesn't fit any template" warning
+that asks the user to re-split the batch (via /regroup) instead of guessing.
 """
 import os
 
@@ -31,6 +38,16 @@ MAHALLE_DXF_PATH = os.path.join(DATA_DIR, 'reference', 'mahalleler.dxf')
 # deployment section), so the SQLite file survives restarts.
 _DATA_DISK = os.environ.get('DATA_DISK_PATH') or os.path.join(os.path.dirname(DATA_DIR), 'instance')
 DB_PATH = os.path.join(_DATA_DISK, 'atasman_kayitlari.db')
+
+# Faz 1.6: üretilen her ataşman DXF'inin kalıcı bir kopyası -- aynı _DATA_DISK
+# üzerinde (Render'da kalıcı disk, yerelde instance/), üretim anındaki oturumun
+# geçici tempdir'inden (main.py::_session_dir, sunucu yeniden başlayınca/
+# deploy'da silinir) FARKLI olarak sunucu yeniden başlasa bile silinmiyor.
+# "İndirilecek Dosyalar" sayfası (main.py::dosyalarim) ataşmanları buradan
+# okuyup tekrar indirtebiliyor -- veritabanındaki atasmanlar.dosya_yolu
+# kolonu bu dizine GÖRE (relative) bir yol tutuyor, mutlak değil, ki disk
+# bağlama noktası (DATA_DISK_PATH) ileride değişirse eski kayıtlar bozulmasın.
+ATASMAN_CIKTI_DIR = os.path.join(_DATA_DISK, 'uretilen_atasmanlar')
 
 _BASE_SCALE = 250
 _BASE_TEMPLATE = {
@@ -66,8 +83,23 @@ _BASE_TEMPLATE = {
 # 1/250 şablonu tek kaynak: diğer ölçekler aynı dosyayı, sadece 'scale'
 # oranlanmış olarak kullanır (bkz. modül docstring'i). Yeni bir DXF şablonu
 # gerekmiyor -- CIZPEN çerçevesi aynı, sadece kapsadığı arazi büyüyor.
+#
+# Faz 1.1: kullanıcının belirttiği sabit ÜST SINIR -- 1/1000'den daha kaba
+# (1500, 2000...) bir ölçek ASLA otomatik seçilmemeli. Böyle bir küme
+# suggest_scale()'e göre "hiçbir şablona sığmıyor" sayılır ve clusters.html
+# ekranında kullanıcıya sorulur/uyarılır (bkz. main.py::generate ve
+# clusters.html) -- sessizce çok kaba bir ölçekte (okunaksız) üretim yapmak
+# yerine. Daha büyük bir alanı tek ataşmanda değil, birden çok ayrı ataşmana
+# bölerek üretmek gerekiyor (bkz. survey.py::CLUSTER_RADIUS_M, describe_clusters).
+#
+# Faz 1.2: ara ölçek 1/500 eklendi -- kullanıcı, bir yüklemedeki farklı
+# gruplara farklı ölçeklerin uygun olabileceğini belirtti (ör. birbirine çok
+# yakın 3 parça 1/250'ye sığar, biraz daha yayılmış 5 parça ancak 1/500'e
+# sığar, geniş bir alana yayılmış 7 parça da 1/1000 gerektirir) -- artık
+# gruplama bu üç ölçeği de göz önünde bulundurarak her grup için MÜMKÜN OLAN
+# EN İNCE ölçeği seçiyor, sabit tek bir ölçek varsaymıyor.
 TEMPLATES = {str(_BASE_SCALE): dict(_BASE_TEMPLATE)}
-for _plot_scale in (1000, 1500, 2000):
+for _plot_scale in (500, 1000):
     _tpl = dict(_BASE_TEMPLATE)
     _tpl['scale'] = _BASE_TEMPLATE['scale'] * (_plot_scale / _BASE_SCALE)
     TEMPLATES[str(_plot_scale)] = _tpl

@@ -12,27 +12,31 @@ import secrets
 import shutil
 import tempfile
 import uuid
+from datetime import datetime
 
 from flask import Flask, render_template, request, send_file, redirect, url_for, flash, session, g
 
 from .core.survey import (
     parse_survey_candidates, describe_clusters, classify_unclassified_piece,
-    build_reconstruction_suggestions, CLUSTER_RADIUS_M,
+    build_reconstruction_suggestions, CLUSTER_RADIUS_M, describe_one_group,
 )
 from .core.preview import render_run_preview_svg
 from .core.generator import AtasmanInput, generate_atasman
 from .core.config import (
     TEMPLATES, POINT_CODE_TABLE, MAHALLE_DXF_PATH, PREFIX_LABELS, MANUAL_PIECE_CHOICES,
+    ATASMAN_CIKTI_DIR,
 )
 from .core.db import (
-    init_db, save_atasman, list_hakedis_numbers, get_records,
+    init_db, save_atasman, list_hakedis_numbers, get_records, get_atasman_by_id,
     get_unit_prices, set_unit_prices, delete_record, T_KEYS,
     allocate_item_codes, count_users, create_user, get_user_by_username,
     get_user_by_id, get_user_by_email, update_user_info, set_user_password,
     create_password_token, get_password_token, kullan_password_token,
-    list_users, user_atasman_stats, per_user_atasman_counts,
+    list_users, kullanici_ozet, haftalik_trend, ekip_ortalamasi,
+    admin_is_bazinda_ozet, admin_personel_bazinda_ozet,
     list_isler, get_is_by_id, get_user_isler, set_user_isler,
 )
+from .core.charts import render_weekly_bar_chart_svg, render_compare_bars_svg, BAR_COLOR, COMPARE_COLOR
 from .core.icmal_xlsx import build_icmal_workbook
 from .core.mailer import send_mail, MailGonderilemedi
 from .core import auth
@@ -81,6 +85,25 @@ SESSIONS = {}
 
 def _session_dir(session_id):
     return os.path.join(tempfile.gettempdir(), 'atasman-app-sessions', session_id)
+
+
+def _atasman_dosya_adi(hakedis_no, sira_no, mahalle):
+    """Faz 1.6/1.7: üretilen ataşman DXF'inin dosya adı -- per the user,
+    "Hakediş No/Ataşman No_Mahalle İsmi" biçiminde (bkz. icmal.html'deki
+    "Kroki No" kolonu, aynı hakedis_no/sira_no çiftini zaten hep bu sırayla
+    gösteriyordu). Dosya adında "/" kullanılamadığı için (işletim sistemi
+    bunu dizin ayracı sayar) yerine "_" konuyor: "3_12_EMİRGAZİ.dxf" gibi --
+    ilk sürümde "-" kullanılmıştı ("3-12_..."), kullanıcı "_" istedi.
+    Boşluklar da "_" ile değiştiriliyor (NetCAD/Windows'ta dosya adında
+    boşluk sorun çıkarabiliyor)."""
+    return f"{hakedis_no}_{sira_no}_{mahalle}.dxf".replace(' ', '_')
+
+
+def _atasman_kalici_yol(is_id, hakedis_no, dosya_adi):
+    """ATASMAN_CIKTI_DIR'e GÖRE (relative) yol -- veritabanına bu haliyle
+    yazılır (bkz. config.py::ATASMAN_CIKTI_DIR docstring'i, disk taşınırsa
+    diye mutlak yol yerine relative tutuluyor)."""
+    return os.path.join(str(is_id), str(hakedis_no), dosya_adi)
 
 
 def _my_isler():
@@ -136,16 +159,21 @@ def _render_clusters(session_id, candidates, hakedis_no, radius=None):
     edilmiş haliyle) kümeleri hesaplar, oturuma kaydeder, küme ekranını
     döner -- hem /analyze (yeniden inşa önerisi yoksa direkt) hem de
     /reconstruct (öneriler onaylandıktan sonra) hem de /regroup (kullanıcı
-    yakınlık mesafesini elle değiştirdiğinde) tarafından kullanılır.
+    ileri düzey elle bir mesafe girdiğinde ya da otomatiğe döndüğünde)
+    tarafından kullanılır.
+
+    Faz 1.2: radius=None (varsayılan) -- gruplama, deneyle doğrulanmış dahili
+    bir mesafe sinyaliyle (survey.py::CLUSTER_RADIUS_M) otomatik yapılır,
+    kullanıcıya hiç sorulmaz/gösterilmez. Her grup, kendi bbox'ına göre
+    ayrıca ve tamamen otomatik olarak mümkün olan en ince şablona (1/250,
+    1/500, 1/1000) atanır (bkz. survey.py::describe_clusters, suggest_scale).
+    radius bir sayı verilirse (yalnız /regroup'un "ileri düzey" elle
+    geçersiz kılması), o mesafe kullanılır -- otomatik sonuç gerçekten
+    yanlışsa diye bir kaçış yolu.
 
     `candidates` ve kullanılan `radius`, oturuma kaydediliyor (`sess['candidates']`,
     `sess['cluster_radius']`) ki /regroup, dosyaları yeniden yükletmeden AYNI
-    parça listesini farklı bir mesafeyle yeniden kümeleyebilsin -- tek bir
-    sabit mesafenin her saha dosyası için doğru olamayacağı gerçek verilerle
-    doğrulandı (bkz. survey.py::CLUSTER_RADIUS_M yorumu), o yüzden kesin
-    cevap yerine değiştirilebilir bir ilk tahmin sunuluyor."""
-    if radius is None:
-        radius = CLUSTER_RADIUS_M
+    parça listesini farklı bir şekilde yeniden kümeleyebilsin."""
     sess = SESSIONS[session_id]
     groups = describe_clusters(candidates, sess.get('bg_path'), sess.get('mahalle_dxf_path'),
                                 radius=radius)
@@ -158,7 +186,8 @@ def _render_clusters(session_id, candidates, hakedis_no, radius=None):
     sess['cluster_radius'] = radius
     return render_template('clusters.html', session_id=session_id, groups=groups,
                             hakedis_no=hakedis_no, templates=TEMPLATES, enumerate=enumerate,
-                            manual_piece_choices=MANUAL_PIECE_CHOICES, cluster_radius=radius)
+                            manual_piece_choices=MANUAL_PIECE_CHOICES, cluster_radius=radius,
+                            default_manual_radius=CLUSTER_RADIUS_M)
 
 
 @app.route('/kurulum', methods=['GET', 'POST'])
@@ -218,18 +247,76 @@ def cikis():
     return redirect(url_for('giris'))
 
 
+def _tarih_formatla(iso_str):
+    if not iso_str:
+        return None
+    try:
+        return datetime.fromisoformat(iso_str).strftime('%d.%m.%Y')
+    except ValueError:
+        return iso_str
+
+
 @app.get('/panel')
 @auth.login_required
 def panel():
     is_admin = auth.is_admin()
-    own_stats = user_atasman_stats(None if is_admin else session['user_id'])
-    per_user = per_user_atasman_counts() if is_admin else None
-    return render_template('panel.html', is_admin=is_admin, own_stats=own_stats, per_user=per_user)
+    current_is = g.current_is
+    is_ids_all = [i['id'] for i in g.isler]
+
+    # Yönetici, birden fazla işi varsa "Bu iş" / "Tüm işlerim" arasında
+    # geçiş yapabiliyor -- personel için bu seçim yok, hep sadece o an
+    # çalıştığı işe (nav'daki iş rozetine) göre görür.
+    gorunum = request.args.get('gorunum', 'bu_is')
+    if is_admin and gorunum == 'tum_isler':
+        is_filter = is_ids_all
+    else:
+        gorunum = 'bu_is'
+        is_filter = current_is['id'] if current_is else is_ids_all
+
+    own_stats = kullanici_ozet(session['user_id'], is_id=is_filter)
+    own_stats['son_olcum_fmt'] = _tarih_formatla(own_stats['son_olcum'])
+    own_trend = haftalik_trend(session['user_id'], is_id=is_filter, hafta_sayisi=10)
+    own_chart = render_weekly_bar_chart_svg([w['label'] for w in own_trend], [w['adet'] for w in own_trend])
+
+    ekip = None
+    compare_chart = None
+    if not is_admin and current_is:
+        ekip = ekip_ortalamasi(current_is['id'])
+        if ekip['kisi_sayisi'] > 0:
+            compare_chart = render_compare_bars_svg([
+                ('Sen', own_stats['toplam'], BAR_COLOR),
+                ('Ekip ortalaması', round(ekip['ort_toplam'], 1), COMPARE_COLOR),
+            ])
+
+    admin_data = None
+    if is_admin:
+        sirket_stats = kullanici_ozet(None, is_id=is_filter)
+        sirket_stats['son_olcum_fmt'] = _tarih_formatla(sirket_stats['son_olcum'])
+        sirket_trend = haftalik_trend(None, is_id=is_filter, hafta_sayisi=10)
+        sirket_chart = render_weekly_bar_chart_svg([w['label'] for w in sirket_trend], [w['adet'] for w in sirket_trend])
+        is_ozet = admin_is_bazinda_ozet(is_ids_all)
+        personel_ozet = admin_personel_bazinda_ozet(is_filter)
+        for p in personel_ozet:
+            p['son_olcum_fmt'] = _tarih_formatla(p['son_olcum'])
+        uretim_yapan = sum(1 for p in personel_ozet if p['toplam'] > 0)
+        admin_data = {
+            'sirket_stats': sirket_stats, 'sirket_chart': sirket_chart,
+            'is_ozet': is_ozet, 'personel_ozet': personel_ozet, 'gorunum': gorunum,
+            'uretim_yapan': uretim_yapan, 'toplam_personel': len(personel_ozet),
+        }
+
+    return render_template('panel.html', is_admin=is_admin, own_stats=own_stats,
+                            own_chart=own_chart, compare_chart=compare_chart, ekip=ekip,
+                            admin_data=admin_data, current_is=current_is,
+                            coklu_is=len(is_ids_all) > 1)
 
 
 @app.get('/hakkinda')
-@auth.login_required
 def hakkinda():
+    # Faz 1.6: per the user, bu sayfa giriş yapmadan da görülebilmeli --
+    # linki paylaştığında (atasman.nordgis.com) giriş yapmamış biri de
+    # "yazılım nedir" / "hakkımızda" bilgisine erişebilsin, sadece asıl
+    # üretim ekranları (index, icmal, personel...) girişe kapalı kalsın.
     return render_template('hakkinda.html')
 
 
@@ -400,8 +487,13 @@ def sifre_unuttum():
 
 
 @app.get('/')
-@auth.login_required
 def index():
+    # Faz 1.6: per the user, atasman.nordgis.com linkini paylaştığında giriş
+    # yapmamış biri boş bir hataya/girişe değil, tanıtım (landing) sayfasına
+    # düşsün -- zaten giriş yapmış biri direkt üretim ekranına geçer. Bu
+    # yüzden burada artık @auth.login_required yok, kontrol elle yapılıyor.
+    if not session.get('user_id'):
+        return render_template('landing.html')
     return render_template('upload.html', templates=TEMPLATES, point_codes=POINT_CODE_TABLE,
                             current_hakedis_no=session.get('current_hakedis_no', ''))
 
@@ -528,14 +620,19 @@ def regroup():
     """Kullanıcı, tespit ekranındaki otomatik gruplamanın yanlış olduğunu
     (birbirinden farklı işleri tek ataşmanda birleştirdiğini, ya da tek bir
     işi gereksiz yere parçaladığını) düşünürse, dosyaları yeniden yüklemeden,
-    AYNI parça listesini farklı bir yakınlık mesafesiyle yeniden kümelemesini
-    sağlar -- tek bir sabit mesafenin her saha dosyası için doğru
-    olamayacağı gerçek verilerle doğrulandı (bkz. survey.py::CLUSTER_RADIUS_M)."""
+    AYNI parça listesini "ileri düzey" elle bir mesafeyle yeniden
+    kümelemesini sağlar -- ya da mode=auto ile otomatik gruplamaya geri döner.
+
+    Faz 1.2: normal kullanımda kullanıcı bu route'u hiç görmez -- gruplama
+    zaten otomatik (bkz. survey.py::describe_clusters). Bu route sadece o
+    otomatik sonuç gerçekten yanlışsa diye bir kaçış yolu."""
     session_id = request.form.get('session_id')
     sess = SESSIONS.get(session_id)
     if not sess or 'candidates' not in sess:
         flash('Oturum süresi doldu, dosyaları tekrar yükleyin.')
         return redirect(url_for('index'))
+    if request.form.get('mode') == 'auto':
+        return _render_clusters(session_id, sess['candidates'], sess['hakedis_no'], radius=None)
     try:
         radius = float(request.form.get('cluster_radius', '').replace(',', '.'))
         if radius <= 0:
@@ -545,6 +642,51 @@ def regroup():
         return _render_clusters(session_id, sess['candidates'], sess['hakedis_no'],
                                  radius=sess.get('cluster_radius'))
     return _render_clusters(session_id, sess['candidates'], sess['hakedis_no'], radius=radius)
+
+
+def _render_groups(session_id, sess, groups):
+    """/merge-groups sonrası (ya da hata durumunda) küme ekranını, oturumdaki
+    GÜNCEL groups listesiyle (yeniden kümelemeden) tekrar render eder."""
+    return render_template('clusters.html', session_id=session_id, groups=groups,
+                            hakedis_no=sess.get('hakedis_no'), templates=TEMPLATES, enumerate=enumerate,
+                            manual_piece_choices=MANUAL_PIECE_CHOICES, cluster_radius=sess.get('cluster_radius'),
+                            default_manual_radius=CLUSTER_RADIUS_M)
+
+
+@app.post('/merge-groups')
+@auth.login_required
+def merge_groups():
+    """Faz 1.3: kullanıcı, otomatik gruplamanın bir işi yanlışlıkla ikiye
+    böldüğünü düşünürse (ör. aynı sokağın iki ucu, aralarındaki mesafe
+    yüzünden farklı kümelere düştüyse), küme ekranında birden fazla kümeyi
+    elle seçip "bunlar aslında aynı iş" diyerek TEK bir kümede
+    birleştirebilir -- /regroup'un (tüm gruplamayı baştan, tek bir mesafeyle
+    yeniden hesaplayan) yanında, sadece BELİRLİ kümeleri hedef alan daha
+    hassas bir revizyon aracı."""
+    session_id = request.form.get('session_id')
+    sess = SESSIONS.get(session_id)
+    if not sess or not sess.get('groups'):
+        flash('Oturum süresi doldu, dosyaları tekrar yükleyin.')
+        return redirect(url_for('index'))
+    groups = sess['groups']
+    idxs = sorted({int(i) for i in request.form.getlist('merge_idx') if i.isdigit()})
+    idxs = [i for i in idxs if 0 <= i < len(groups)]
+    if len(idxs) < 2:
+        flash('Birleştirmek için en az 2 küme seçmelisiniz (kümelerin başındaki kutucukları işaretleyin).')
+        return _render_groups(session_id, sess, groups)
+
+    merged_candidates = []
+    for i in idxs:
+        merged_candidates.extend(groups[i]['candidates'])
+    new_group = describe_one_group(merged_candidates, sess.get('bg_path'), sess.get('mahalle_dxf_path'))
+
+    remaining = [g for i, g in enumerate(groups) if i not in idxs]
+    remaining.append(new_group)
+    remaining.sort(key=lambda g: -g['piece_count'])
+    sess['groups'] = remaining
+    flash(f"{len(idxs)} küme birleştirildi -- yeni küme {new_group['piece_count']} parke parçası, "
+          f"{new_group['bordur_count']} bordür/oluk kenarı içeriyor.")
+    return _render_groups(session_id, sess, remaining)
 
 
 @app.post('/generate')
@@ -585,8 +727,11 @@ def generate():
 
     template_scale = request.form.get('template_scale') or group.get('suggested_scale')
     if template_scale not in TEMPLATES:
-        flash(f"Bu küme hiçbir mevcut şablona sığmıyor "
-              f"(bbox={group['bbox']}). Şu an sadece 250 ölçek şablonu mevcut.")
+        flash("Bu küme, en kaba şablonumuz olan 1/1000 ölçeğine bile sığmıyor "
+              f"(bbox={group['bbox']}). Sınırımız 1/1000 -- daha kaba bir ölçekte "
+              "sessizce (okunaksız) üretim yapmıyoruz. Küme ekranındaki "
+              "'Yakınlık mesafesi'ni küçültüp grupları yeniden hesaplayın, bu "
+              "alan muhtemelen birden fazla ayrı ataşman olmalı.")
         return redirect(url_for('index'))
 
     inp = AtasmanInput(
@@ -607,6 +752,30 @@ def generate():
         flash(f"Üretim sırasında hata oluştu: {exc}")
         return redirect(url_for('index'))
 
+    out_name = _atasman_dosya_adi(inp.hakedis_no, inp.sira_no, inp.mahalle)
+    sdir = _session_dir(session_id)
+    out_path = os.path.join(sdir, out_name)
+    with open(out_path, 'wb') as f:
+        f.write(result['dxf_bytes'])
+
+    # Faz 1.6: aynı DXF'in KALICI bir kopyası da ATASMAN_CIKTI_DIR altına
+    # yazılıyor -- yukarıdaki out_path (session tempdir'i) sunucu yeniden
+    # başlayınca/deploy'da silinir, bu yüzden "İndirilecek Dosyalar" sayfası
+    # (bkz. dosyalarim()) bu kalıcı kopyadan okuyor. Yazma başarısız olursa
+    # (disk dolu vb.) DXF'in az önceki hemen-indir linkini bozmasın diye
+    # yutuluyor, sadece dosya_yolu boş kalır -- o kayıt "İndirilecek
+    # Dosyalar"da "dosya kalıcı olarak saklanamadı" şeklinde görünür.
+    dosya_yolu = None
+    try:
+        rel_yol = _atasman_kalici_yol(sess.get('is_id'), inp.hakedis_no, out_name)
+        kalici_path = os.path.join(ATASMAN_CIKTI_DIR, rel_yol)
+        os.makedirs(os.path.dirname(kalici_path), exist_ok=True)
+        with open(kalici_path, 'wb') as f:
+            f.write(result['dxf_bytes'])
+        dosya_yolu = rel_yol
+    except Exception as exc:
+        flash(f"DXF üretildi, ama kalıcı arşive kaydedilemedi: {exc}")
+
     # Ataşmanın verilerini İcmal için kalıcı kaydet -- DXF indirmeyi
     # engellemesin diye kayıt hatası sessizce yutuluyor, sadece kullanıcıya
     # bilgi veriliyor.
@@ -614,18 +783,14 @@ def generate():
         # İcmal, parke kalemlerini minha alanı düşülmüş (NET) haliyle alır --
         # ataşman DXF'inin kendi başlık bloğu ise GROSS (result['totals']) ile
         # doldu, ayrıca ayrı bir Minha toplamı gösteriyor.
+        nokta_sayisi = sum(len(c.get('verts') or []) for c in inp.candidates)
         save_atasman(inp.hakedis_no, inp.sira_no, inp.mahalle, inp.cadde_sokak,
                      inp.aykome_no, result['totals_net'],
                      kapi_no=request.form.get('kapi_no', '').strip(),
-                     kullanici_id=session.get('user_id'), is_id=sess.get('is_id'))
+                     kullanici_id=session.get('user_id'), is_id=sess.get('is_id'),
+                     nokta_sayisi=nokta_sayisi, dosya_yolu=dosya_yolu)
     except Exception as exc:
         flash(f"DXF üretildi, ama İcmal kaydı tutulamadı: {exc}")
-
-    out_name = f"atasman_{inp.hakedis_no}-{inp.sira_no}_{inp.mahalle}.dxf".replace(' ', '_')
-    sdir = _session_dir(session_id)
-    out_path = os.path.join(sdir, out_name)
-    with open(out_path, 'wb') as f:
-        f.write(result['dxf_bytes'])
 
     # bu ataşmandaki her kalemden kaç tane olduğunu (generator.py) mahallenin
     # kendi kalıcı, hiç durmayan sayacına göre gerçek koda çevir (YP6, YP7...)
@@ -656,6 +821,49 @@ def indir_dosya():
         flash('Dosya bulunamadı, ataşmanı tekrar üretin.')
         return redirect(url_for('index'))
     return send_file(path, as_attachment=True, download_name=dosya)
+
+
+@app.get('/dosyalarim')
+@auth.login_required
+def dosyalarim():
+    """Faz 1.6: üretilmiş TÜM ataşman DXF'lerini hakediş hakediş gruplayıp
+    listeleyen, kalıcı arşivden (ATASMAN_CIKTI_DIR) tekrar indirmeyi
+    sağlayan sayfa -- per the user, üretim anında bir kere indirip
+    unutulan/kaybolan dosyalar yerine, buradan istediği zaman tekrar
+    erişebiliyor. İcmal ekranındaki aynı yetki kuralı: Personel sadece kendi
+    ürettiklerini, Yönetici işin tüm kayıtlarını görür."""
+    if not g.current_is:
+        return render_template('dosyalarim.html', gruplar=[])
+    own_id = None if auth.is_admin() else session['user_id']
+    gruplar = []
+    for h in list_hakedis_numbers(g.current_is['id']):
+        records = get_records(h, g.current_is['id'], kullanici_id=own_id)
+        if records:
+            gruplar.append({'hakedis_no': h, 'records': records})
+    # en yeni hakediş en üstte gösterilsin
+    gruplar.sort(key=lambda x: x['hakedis_no'], reverse=True)
+    return render_template('dosyalarim.html', gruplar=gruplar)
+
+
+@app.get('/dosyalarim/indir/<int:record_id>')
+@auth.login_required
+def dosyalarim_indir(record_id):
+    rec = get_atasman_by_id(record_id)
+    own_id = None if auth.is_admin() else session['user_id']
+    yetkisiz = (not rec or (g.current_is and rec['is_id'] != g.current_is['id'])
+                or (own_id is not None and rec['kullanici_id'] != own_id))
+    if yetkisiz:
+        flash('Dosya bulunamadı ya da bu dosyaya erişim yetkiniz yok.')
+        return redirect(url_for('dosyalarim'))
+    if not rec.get('dosya_yolu'):
+        flash('Bu ataşman eski bir kayıt -- dosyası kalıcı olarak saklanmamış, '
+              'İcmal\'den bilgilerine bakıp yeniden üretmeniz gerekiyor.')
+        return redirect(url_for('dosyalarim'))
+    full_path = os.path.join(ATASMAN_CIKTI_DIR, rec['dosya_yolu'])
+    if not os.path.isfile(full_path):
+        flash('Dosya kalıcı arşivde bulunamadı (silinmiş olabilir).')
+        return redirect(url_for('dosyalarim'))
+    return send_file(full_path, as_attachment=True, download_name=os.path.basename(rec['dosya_yolu']))
 
 
 @app.get('/icmal')

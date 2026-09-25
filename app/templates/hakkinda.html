@@ -3,7 +3,7 @@
   <h1>Hakkında</h1>
   <p class="sub">Nordgis Mühendislik ve bu yazılım hakkında.</p>
 
-  <div class="panel">
+  <div class="panel" id="hakkimizda">
     <div class="about-hero">
       {% if has_logo %}
       <img src="{{ url_for('static', filename='logo.png') }}" alt="Nordgis Mühendislik logosu">
@@ -80,7 +80,7 @@
     </div>
   </div>
 
-  <div class="panel">
+  <div class="panel" id="yazilim-nedir">
     <h3 style="margin-top:0">Bu yazılım hakkında</h3>
     <p>
       Ataşman Otomasyonu, saha ekibimizin GNSS ile ölçtüğü nokta ve saha verilerini alıp

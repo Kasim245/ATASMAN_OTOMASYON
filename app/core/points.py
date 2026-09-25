@@ -58,26 +58,54 @@ def classify_polygon(vertex_ids, pts):
     return parke_key, minha, cnt
 
 
-def find_orphan_runs(pts, consumed_ids):
-    """Kodu olup saha DXF'inde hiçbir çizgide kullanılmamış (consumed_ids'te
-    olmayan) nokta id'lerini bulur, sahada genelde bir şeklin etrafında
-    sırayla numaralandıkları varsayımıyla ARDIŞIK numaralara göre gruplar
-    (örn. 1,2,3...15 -> tek bir grup; sonra 20,21..28 -> ayrı bir grup).
-    Kodu tamamen boş VE hiç kullanılmamış noktalar (muhtemelen ilgisiz/
-    referans noktalar) bu gruplamaya dahil edilmez. En az 3 noktası olmayan
-    bir grup kapalı bir şekil oluşturamayacağı için elenir."""
-    orphan_ids = sorted(i for i, (x, y, z, code) in pts.items()
-                         if i not in consumed_ids and code)
+def _group_consecutive(ids):
+    """Ardışık numaralı id'leri gruplar (örn. 1,2,3...15 -> tek bir grup;
+    sonra 20,21..28 -> ayrı bir grup) -- sahada bir şeklin etrafındaki
+    noktaların genelde sırayla numaralandığı varsayımıyla. find_orphan_runs()
+    ve find_codeless_orphan_runs() arasında ortak."""
     runs = []
     cur = []
-    for i in orphan_ids:
+    for i in ids:
         if cur and i != cur[-1] + 1:
             runs.append(cur)
             cur = []
         cur.append(i)
     if cur:
         runs.append(cur)
-    return [r for r in runs if len(r) >= 3]
+    return runs
+
+
+def find_orphan_runs(pts, consumed_ids):
+    """Kodu olup saha DXF'inde hiçbir çizgide kullanılmamış (consumed_ids'te
+    olmayan) nokta id'lerini bulur, ARDIŞIK numaralara göre gruplar (bkz.
+    _group_consecutive). En az 3 noktası olmayan bir grup kapalı bir şekil
+    oluşturamayacağı için elenir."""
+    orphan_ids = sorted(i for i, (x, y, z, code) in pts.items()
+                         if i not in consumed_ids and code)
+    return [r for r in _group_consecutive(orphan_ids) if len(r) >= 3]
+
+
+def find_codeless_orphan_runs(pts, consumed_ids):
+    """Faz 1.4: kodu TAMAMEN BOŞ olan VE saha DXF'inde hiçbir çizgide/alanda
+    kullanılmamış nokta id'lerini bulur.
+
+    Eskiden bu noktalar "muhtemelen ilgisiz/referans nokta" varsayımıyla
+    find_orphan_runs()'ta tamamen sessizce elenip hiç kullanıcıya
+    sorulmuyordu. Kullanıcı gerçek bir örnek verdi: ör. 193-196 gibi ardışık
+    noktaların ne kodu var ne saha DXF'inde bir alanı/çizgisi -- ama bu
+    onların gerçekten önemsiz olduğu anlamına gelmiyor, kodlanması unutulmuş
+    bir bordür/oluk/parke de olabilir. Artık bunlar da kullanıcıya soruluyor
+    (bkz. main.py::/analyze, reconstruct.html'in "kod da yok, çizgi de yok"
+    bölümü) -- o ekranda "dahil et" derse, clusters.html'in zaten var olan
+    "kodsuz parça" onay akışı (bordür mü, oluk mu, parke mi, yoksa atla mı)
+    üzerinden ne olduğu sorulur.
+
+    En az 2 nokta yeterli (find_orphan_runs'ın aksine 3 değil) -- bir bordür/
+    oluk sadece 2 uç nokta gerektirir, kapalı bir alan gibi 3'e ihtiyaç
+    yok."""
+    orphan_ids = sorted(i for i, (x, y, z, code) in pts.items()
+                         if i not in consumed_ids and not code)
+    return [r for r in _group_consecutive(orphan_ids) if len(r) >= 2]
 
 
 def find_bordur_edges(vertex_ids, pts, target_codes):

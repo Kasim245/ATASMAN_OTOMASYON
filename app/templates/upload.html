@@ -22,7 +22,7 @@
   </div>
   {% else %}
   <div class="panel">
-    <form action="{{ url_for('analyze') }}" method="post" enctype="multipart/form-data">
+    <form action="{{ url_for('analyze') }}" method="post" enctype="multipart/form-data" class="js-heavy-form">
       <label for="hakedis_no">Hangi hakediştesiniz?</label>
       <input type="text" id="hakedis_no" name="hakedis_no" value="{{ current_hakedis_no or '' }}" required>
       <p class="hint">Bundan sonra yüklediğiniz her şey bu hakedişe göre hazırlanır -- mahallelerin malzeme kalemi

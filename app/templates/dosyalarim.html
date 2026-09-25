@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% block content %}
+  <h1>İndirilecek Dosyalar</h1>
+  <p class="sub">Ürettiğiniz her ataşman DXF'i burada hakediş hakediş listelenir ve kalıcı olarak saklanır --
+    ilk üretim anında indirmeyi kaçırsanız da buradan istediğiniz zaman tekrar indirebilirsiniz.
+    {% if nav_current_is %}Şu an <strong>{{ nav_current_is.ad }}</strong> işinin dosyalarını görüyorsunuz.{% endif %}</p>
+
+  {% if not gruplar %}
+  <div class="panel">
+    <p class="hint" style="margin:0">Henüz üretilmiş bir ataşman yok. <a href="{{ url_for('index') }}">Ataşman üretmek için buraya gidin</a>.</p>
+  </div>
+  {% endif %}
+
+  {% for grup in gruplar %}
+  <div class="panel">
+    <details {% if loop.first %}open{% endif %}>
+      <summary style="cursor:pointer; list-style:none; display:flex; justify-content:space-between; align-items:center;">
+        <h3 style="margin:0">{{ grup.hakedis_no }} Nolu Hakediş <span class="badge">{{ grup.records|length }} ataşman</span></h3>
+        <span class="faq-icon">+</span>
+      </summary>
+      <div class="table-scroll" style="margin-top:14px">
+        <table>
+          <tr>
+            <th>Hakediş No/Ataşman No</th><th>Mahalle</th><th>Cadde/Sokak</th><th>Ölçen</th><th>Tarih</th><th></th>
+          </tr>
+          {% for r in grup.records %}
+          <tr>
+            <td>{{ r.hakedis_no }}/{{ r.sira_no }}</td>
+            <td>{{ r.mahalle }}</td>
+            <td>{{ r.cadde_sokak }}</td>
+            <td>{{ r.olcen_ad_soyad or '-' }}</td>
+            <td>{{ r.created_at[:10] if r.created_at else '-' }}</td>
+            <td>
+              {% if r.dosya_yolu %}
+              <a class="btn btn-sm" href="{{ url_for('dosyalarim_indir', record_id=r.id) }}">İndir</a>
+              {% else %}
+              <span class="hint" style="white-space:normal">dosya saklanmamış</span>
+              {% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+        </table>
+      </div>
+    </details>
+  </div>
+  {% endfor %}
+{% endblock %}

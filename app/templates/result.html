@@ -7,6 +7,9 @@
     <div style="margin-bottom:16px">
       <a class="btn" href="{{ url_for('indir_dosya', session_id=session_id, dosya=dosya) }}">Ataşman DXF'ini indir</a>
     </div>
+    <p class="hint">Bu dosya <strong>{{ dosya }}</strong> adıyla kalıcı olarak da saklandı --
+      istediğiniz zaman <a href="{{ url_for('dosyalarim') }}">İndirilecek Dosyalar</a> sayfasından
+      tekrar indirebilirsiniz.</p>
 
     {% if item_codes %}
     <h3>Malzeme kalemi kodları</h3>

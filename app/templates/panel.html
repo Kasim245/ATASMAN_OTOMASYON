@@ -1,7 +1,112 @@
 {% extends "base.html" %}
 {% block content %}
   <h1>Merhaba, {{ session.get('ad_soyad') }}</h1>
-  <p class="sub">{{ 'Yönetici paneline hoş geldiniz.' if is_admin else 'Ataşman Otomasyonu ana paneline hoş geldiniz.' }}</p>
+  <p class="sub">
+    {% if is_admin %}Şirket genelinde üretim özeti aşağıda.
+    {% elif current_is %}{{ current_is.ad }} için üretim özetiniz aşağıda.
+    {% else %}Henüz size atanmış bir iş yok -- yöneticinizle iletişime geçin.{% endif %}
+  </p>
+
+  {% if is_admin and admin_data %}
+    {% if coklu_is %}
+    <div class="view-toggle">
+      <a href="{{ url_for('panel', gorunum='bu_is') }}" class="{{ 'active' if admin_data.gorunum == 'bu_is' else '' }}">
+        {{ current_is.ad if current_is else 'Bu iş' }}
+      </a>
+      <a href="{{ url_for('panel', gorunum='tum_isler') }}" class="{{ 'active' if admin_data.gorunum == 'tum_isler' else '' }}">
+        Tüm işlerim
+      </a>
+    </div>
+    {% endif %}
+
+    <div class="panel">
+      <h3 style="margin-top:0">Şirket özeti</h3>
+      <div class="stats-row">
+        <div class="stat"><span class="stat-num">{{ admin_data.sirket_stats.toplam }}</span><span class="stat-label">Toplam ataşman</span></div>
+        <div class="stat"><span class="stat-num">{{ '%.0f'|format(admin_data.sirket_stats.m2_toplam) }}</span><span class="stat-label">Toplam m² (parke)</span></div>
+        <div class="stat"><span class="stat-num">{{ '%.0f'|format(admin_data.sirket_stats.metre_toplam) }}</span><span class="stat-label">Toplam metre (bordür/oluk)</span></div>
+        <div class="stat"><span class="stat-num">{{ admin_data.uretim_yapan }}/{{ admin_data.toplam_personel }}</span><span class="stat-label">Üretim yapan personel</span></div>
+      </div>
+      <p class="meta" style="margin:14px 0 0">Son 30 günde <strong>{{ admin_data.sirket_stats.son_30_gun }}</strong> ataşman
+        {% if admin_data.sirket_stats.son_olcum_fmt %}· son ölçüm <strong>{{ admin_data.sirket_stats.son_olcum_fmt }}</strong>{% endif %}</p>
+    </div>
+
+    <div class="panel">
+      <h3 style="margin-top:0">Haftalık üretim (şirket geneli)</h3>
+      <div class="chart-wrap">{{ admin_data.sirket_chart|safe }}</div>
+    </div>
+
+    <div class="panel">
+      <h3 style="margin-top:0">İş bazında dağılım</h3>
+      <div class="table-scroll">
+        <table>
+          <tr><th>İş</th><th>Toplam ataşman</th><th>m² (parke)</th><th>Metre (bordür/oluk)</th><th>Personel sayısı</th></tr>
+          {% for row in admin_data.is_ozet %}
+          <tr>
+            <td>{{ row.ad }}</td>
+            <td>{{ row.toplam }}</td>
+            <td>{{ '%.0f'|format(row.m2_toplam) }}</td>
+            <td>{{ '%.0f'|format(row.metre_toplam) }}</td>
+            <td>{{ row.personel_sayisi }}</td>
+          </tr>
+          {% endfor %}
+        </table>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h3 style="margin-top:0">Personel bazında dağılım{{ ' (' + current_is.ad + ')' if admin_data.gorunum == 'bu_is' and current_is else ' (tüm işler)' }}</h3>
+      <div class="table-scroll">
+        <table>
+          <tr><th>Personel</th><th>Toplam ataşman</th><th>m² (parke)</th><th>Metre (bordür/oluk)</th><th>Son ölçüm</th></tr>
+          {% for row in admin_data.personel_ozet %}
+          <tr>
+            <td>{{ row.ad_soyad }}</td>
+            <td>{{ row.toplam }}</td>
+            <td>{{ '%.0f'|format(row.m2_toplam) }}</td>
+            <td>{{ '%.0f'|format(row.metre_toplam) }}</td>
+            <td>{{ row.son_olcum_fmt or '-' }}</td>
+          </tr>
+          {% endfor %}
+        </table>
+      </div>
+      <p class="meta" style="margin-top:10px">Bir hakedişteki tüm kayıtları (kimin ölçtüğü dahil) görmek için
+        <a href="{{ url_for('icmal_index') }}">İcmal</a> sayfasına gidin.</p>
+    </div>
+
+  {% else %}
+    <div class="panel">
+      <h3 style="margin-top:0">Senin özetin</h3>
+      <div class="stats-row">
+        <div class="stat"><span class="stat-num">{{ own_stats.toplam }}</span><span class="stat-label">Toplam ataşman</span></div>
+        <div class="stat"><span class="stat-num">{{ '%.0f'|format(own_stats.m2_toplam) }}</span><span class="stat-label">Toplam m² (parke)</span></div>
+        <div class="stat"><span class="stat-num">{{ '%.0f'|format(own_stats.metre_toplam) }}</span><span class="stat-label">Toplam metre (bordür/oluk)</span></div>
+        <div class="stat"><span class="stat-num">{{ own_stats.son_30_gun }}</span><span class="stat-label">Son 30 günde</span></div>
+      </div>
+      <p class="meta" style="margin:14px 0 0">
+        {% if own_stats.nokta_toplam %}Toplam <strong>{{ own_stats.nokta_toplam }}</strong> saha noktası ölçüldü ·{% endif %}
+        {% if own_stats.son_olcum_fmt %}son ölçüm <strong>{{ own_stats.son_olcum_fmt }}</strong>{% else %}henüz hiç ataşman üretmediniz{% endif %}
+      </p>
+    </div>
+
+    <div class="panel">
+      <h3 style="margin-top:0">Haftalık üretimin</h3>
+      <div class="chart-wrap">{{ own_chart|safe }}</div>
+    </div>
+
+    {% if current_is %}
+    <div class="panel">
+      <h3 style="margin-top:0">Sen vs Ekip Ortalaması</h3>
+      {% if compare_chart %}
+        <div class="chart-wrap">{{ compare_chart|safe }}</div>
+        <p class="hint" style="margin-top:10px">Bu sadece {{ current_is.ad }} işindeki personelin ortalamasıdır --
+          başka kimsenin adı ya da sıralaması gösterilmez.</p>
+      {% else %}
+        <p class="meta">Henüz karşılaştırılacak başka personel yok.</p>
+      {% endif %}
+    </div>
+    {% endif %}
+  {% endif %}
 
   <div class="panel">
     <h3 style="margin-top:0">Hızlı erişim</h3>
@@ -31,25 +136,4 @@
       {% endif %}
     </div>
   </div>
-
-  <div class="panel">
-    <h3 style="margin-top:0">{{ 'Sizin ürettikleriniz' if not is_admin else 'Sizin ürettikleriniz (Yönetici)' }}</h3>
-    <p class="meta">Toplam <strong>{{ own_stats.toplam }}</strong> ataşman · son 30 günde <strong>{{ own_stats.son_30_gun }}</strong> ataşman</p>
-  </div>
-
-  {% if is_admin %}
-  <div class="panel">
-    <h3 style="margin-top:0">Personel bazında ataşman sayıları</h3>
-    <div class="table-scroll">
-    <table>
-      <tr><th>Personel</th><th>Toplam ataşman</th></tr>
-      {% for row in per_user %}
-      <tr><td>{{ row.ad_soyad }}</td><td>{{ row.adet }}</td></tr>
-      {% endfor %}
-    </table>
-    </div>
-    <p class="meta" style="margin-top:10px">Bir hakedişteki tüm kayıtları (kimin ölçtüğü dahil) görmek için
-      <a href="{{ url_for('icmal_index') }}">İcmal</a> sayfasına gidin.</p>
-  </div>
-  {% endif %}
 {% endblock %}

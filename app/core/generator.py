@@ -22,7 +22,7 @@ from .dxf_io import (
 )
 from .dxf_entities import lwpolyline_entity, line_entity, text_entity, rehome_background_entity
 from .geometry import polygon_hatch_lines, clip_polygon
-from .survey import totals_from_candidates
+from .survey import totals_from_candidates, merge_bordur_chains
 from .background import extract_background
 
 
@@ -205,9 +205,15 @@ def generate_atasman(inp: AtasmanInput):
     # bordür/oluk taşı, ölçülen parke kenarına DEĞİL, ona paralel + taşın
     # kendi genişliği kadar (12cm/30cm) dışa kaydırılmış konumuna çizilir --
     # uzunluk (d, hakediş miktarı) zaten ham nokta mesafesinden hesaplandı,
-    # burada sadece çizim konumu değişiyor.
-    for key, p1, p2, d, p1o, p2o in bordur_lines:
-        new_entities.append(line_entity(BORDUR_LAYER[key], p1o, p2o, handles))
+    # burada sadece çizim konumu değişiyor. Faz 1.1 (Issue #4): komşu
+    # parçalardan gelen ayrı kenarlar artık tek tek LINE değil, birbirine
+    # değen (ham uçları çakışan) kenarlar TEK bir kesintisiz LWPOLYLINE'a
+    # zincirlenerek çiziliyor -- bkz. survey.py::merge_bordur_chains.
+    for bkey, chains in merge_bordur_chains(bordur_lines).items():
+        layer = BORDUR_LAYER[bkey]
+        for chain_pts in chains:
+            if len(chain_pts) >= 2:
+                new_entities.append(lwpolyline_entity(layer, chain_pts, handles, closed=False))
 
     # minha (rögar) -- kendi küçük poligonu, hangi parke parçasının içindeyse
     # oraya paralel değil, tam kendi ölçülen konumuna çizilir; farklı bir
@@ -230,6 +236,12 @@ def generate_atasman(inp: AtasmanInput):
         bg_xmin, bg_ymin = T(wa['xmin'], wa['ymin'])
         bg_xmax, bg_ymax = T(wa['xmax'], wa['ymax'])
         bg_raw = extract_background(inp.background_dxf_path, bg_xmin, bg_xmax, bg_ymin, bg_ymax)
+        # background metni (kapı no, sokak adı) 1/250 şablonda okunur şekilde
+        # kalibre edildi; daha kaba ölçeklerde (1/1000) şablonun kendi metni
+        # nasıl büyüyorsa (bkz. yukarıdaki kod==40 satırı) o kadar büyütülüyor
+        # -- 250'de katsayı 1.0 (davranış değişmiyor), 1000'de 4.0 (bkz.
+        # rehome_background_entity docstring'i, Issue #2).
+        bg_text_scale = scale / TEMPLATES['250']['scale']
         for ent in bg_raw:
             etype = ent[0][1]
             if etype == 'POLYLINE':
@@ -251,7 +263,7 @@ def generate_atasman(inp: AtasmanInput):
                 if len(clipped) >= 3:
                     background_entities.append(lwpolyline_entity(layer, clipped, handles))
                 continue
-            background_entities.append(rehome_background_entity(ent, handles))
+            background_entities.append(rehome_background_entity(ent, handles, text_scale=bg_text_scale))
 
     flat_existing = [pair for ent in out_entities for pair in ent]
     flat_bg = [pair for ent in background_entities for pair in ent]
