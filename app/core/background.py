@@ -7,6 +7,7 @@ files this was built against run to ~240MB / ~29M lines, which is infeasible
 to parse with the whole-file dxf_io.load_dxf_pairs() helper.
 """
 from .geometry import clip_line
+from .text_metrics import estimate_text_width
 
 INTEREST_LAYERS = {
     'Z_YAPI_RUHSTLI_PL', 'Z_YAPI_RUHSTSIZ_PL', 'Z_YOL_ADI', 'Z_KAPI_NO', 'ADAKENARI',
@@ -15,10 +16,20 @@ INTEREST_LAYERS = {
 
 def _text_footprint(cur_pairs):
     """Kaba (yaklaşık) genişlik/yükseklik -- yazı tipi metriği DXF'te yok,
-    genişlik karakter başına 0.6*yükseklik olarak (çoğu tek satır CAD fontu
-    için makul, standart bir kural) tahmin ediliyor. Amaç piksel-hassas bir
-    kutu değil, "bu yazı kutuya rahat sığar mı" sorusuna kaba ama güvenli bir
-    cevap vermek (bkz. extract_background docstring'indeki Faz 1.12 notu)."""
+    genişlik text_metrics.estimate_text_width() ile (karakter sınıfına göre
+    ölçülmüş Times New Roman oranlarıyla) tahmin ediliyor. Amaç piksel-hassas
+    bir kutu değil, "bu yazı kutuya rahat sığar mı" sorusuna kaba ama güvenli
+    bir cevap vermek (bkz. extract_background docstring'indeki Faz 1.12 notu).
+
+    Faz 1.26: per the user, gerçek bir üretimde sokak adı yazısı ("...Sokak")
+    hâlâ iç şablonun dışına taşıyordu -- kök sebep tam olarak Faz 1.12'nin
+    çözmeye çalıştığı sorunun KENDİSİYDİ, sadece eski sabit oran (0.6*yükseklik)
+    gerçek Times New Roman genişliğinin yaklaşık %60-70'i kadardı (bkz.
+    generator.py::CADDE_CHAR_W_RATIO'nun üstündeki Faz 1.24 notu -- aynı
+    yanlış varsayım, iki farklı yerde). Sokak isimleri çoğunlukla Title Case
+    ("Beka Sokak") -- ne CADDE_CHAR_W_RATIO'nun büyük-harf-özel 1.0'ı, ne de
+    eski düz 0.6 buraya doğrudan uyuyordu; text_metrics'in karışık büyük/
+    küçük harf oranı bu yüzden paylaşıldı."""
     h = 0.0
     val = ''
     for c2, v in cur_pairs:
@@ -29,7 +40,7 @@ def _text_footprint(cur_pairs):
                 pass
         elif c2 == '1':
             val = v
-    w = 0.6 * h * max(len(val), 1)
+    w = estimate_text_width(val, h) if val else 0.0
     return w, h
 
 

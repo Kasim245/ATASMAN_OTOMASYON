@@ -210,17 +210,38 @@ def _standalone_line_candidates(ents_survey, pts, consumed_ids, existing_candida
         mx, my = (p1[0] + p2[0]) / 2.0, (p1[1] + p2[1]) / 2.0
         ref = (mx, my)
         pool = existing_candidates + out
+        nearest = None
         if pool:
             nearest = min(pool, key=lambda c: (c['cx'] - mx) ** 2 + (c['cy'] - my) ** 2)
             if dist((nearest['cx'], nearest['cy']), (mx, my)) <= 30.0:
                 ref = (nearest['cx'], nearest['cy'])
+            else:
+                nearest = None
         offset_m = OLUK_OFFSET_M if key == 'T8' else BORDUR_OFFSET_M
         p1o, p2o = offset_edge_outward(p1, p2, ref, offset_m)
+        bordur_entry = (key, p1, p2, dist(p1, p2), p1o, p2o)
+        # Faz 1.26: per the user, gerçek bir üretimde uzun bir bordür hattı
+        # sahada bağımsız bir LINE olarak ölçülmüştü (yukarıdaki docstring'in
+        # anlattığı tam olarak bu durum) ve bu yüzden yanındaki parke
+        # parçasının etiketinde ("Eski Parke: 4.37 m²") hiç görünmüyordu --
+        # miktarı zaten TOT/TOT_NET'e (bkz. totals_from_candidates) doğru
+        # ekleniyordu, sadece HANGİ parçanın etiketinde gösterileceği
+        # belirlenmiyordu. `nearest` yukarıda zaten (30m içindeyse) GERÇEK
+        # bir parke parçasına işaret ediyor olabilir -- öyleyse bu bordürü o
+        # parçanın kendi etiketinde de göstermek üzere ayrı bir listede
+        # ('attached_bordur') saklıyoruz. Bilerek 'piece_bordur'a DEĞİL,
+        # ayrı bir alana ekleniyor: totals_from_candidates() TOT/TOT_NET'i
+        # sadece 'piece_bordur' üzerinden topluyor, buraya eklemek aynı
+        # bordürü İKİ KEZ saymak (bir kez bu bağımsız LINE adayından, bir
+        # kez de o parçadan) anlamına gelirdi -- miktar tarafına hiç
+        # dokunulmuyor, sadece görünüm/etiket tarafına.
+        if nearest is not None and nearest.get('parke_key'):
+            nearest.setdefault('attached_bordur', []).append(bordur_entry)
         out.append({
             'verts': [p1, p2],
             'area': 0.0,
             'parke_key': None,
-            'piece_bordur': [(key, p1, p2, dist(p1, p2), p1o, p2o)],
+            'piece_bordur': [bordur_entry],
             'cx': mx, 'cy': my,
             'ymin': min(p1[1], p2[1]),
             'minha_area': 0.0,
@@ -757,9 +778,18 @@ def totals_from_candidates(candidates):
             # bordür satırı gibi ayrı bir "Minha: Y m²" satırı da görünmeli
             # (eskiden minha alanı sadece TOT/TOT_NET toplamlarına
             # karışıyordu, tek tek hiçbir parçanın etiketinde görünmüyordu).
+            #
+            # Faz 1.26: etikette gösterilen bordür listesi artık SADECE
+            # c['piece_bordur'] (bu parçanın KENDİ poligon kenarından gelen
+            # bordür) değil, + c['attached_bordur'] (yakınında bağımsız bir
+            # LINE olarak ölçülmüş ama bu parçaya ait olduğu -- bkz.
+            # _standalone_line_candidates -- tespit edilmiş bordür/oluk).
+            # TOT/TOT_NET'e hiç dokunmuyor (yukarıdaki döngü hâlâ sadece
+            # 'piece_bordur' üzerinden topluyor) -- bu sadece hangi etikette
+            # GÖRÜNDÜĞÜnü değiştiriyor, hakediş miktarını değil.
             piece_labels.append((c['parke_key'], c['area'], (c['cx'], c['cy']), c['ymin'],
-                                  c['verts'], c['piece_bordur'], c.get('aykome_no'),
-                                  c.get('minha_area', 0.0)))
+                                  c['verts'], c['piece_bordur'] + c.get('attached_bordur', []),
+                                  c.get('aykome_no'), c.get('minha_area', 0.0)))
         minha_area = c.get('minha_area', 0.0)
         if minha_area:
             TOT['Minha'] += round(minha_area, 2)

@@ -207,10 +207,23 @@ BORDUR_LAYER = {'T4': 'T_4_İDRDN_BORDÜR', 'T5': 'T_5_YERİNDE_BORDÜR', 'T8': 
 # kağıt üzerinde görünmez oluyor. 250, ACI paletinde sabit (arka plana göre
 # DEĞİŞMEYEN) çok koyu gri/siyaha yakın bir renk -- artık hiçbir görüntüleyici
 # konvansiyonuna bağımlı değil.
+# Faz 1.26: Z_YOL_ADI'ya (arka plandan gelen, sahanın üstüne çizilen sokak
+# adı yazısı -- ör. "... Sokak") per the user "rengi siyah değil" -- ACI 250
+# aslında koyu bir GRİ (renk paletinde sabit/arka plana bağımlı olmayan bir
+# ton seçildiği için Faz 1.8'de tercih edilmişti, ama gerçek siyah değil).
+# Standart ACI paleti (1-255) hiçbir zaman "gerçek siyah" içermiyor -- 0
+# ByBlock, 7 arka plana göre adaptif (Faz 1.8'in AZALTMAYA çalıştığı tam
+# olarak buydu: bazı görüntüleyicilerde 7 her zaman beyaza düşüyor). Üçüncü
+# bir seçenek: DXF "true color" (kod 420, 24-bit RGB tamsayı -- 0 = saf
+# siyah, 0x000000), AutoCAD DXF R2004+'ten beri standart, NetCAD dahil
+# modern CAD yazılımlarının çoğunda destekleniyor. Sadece Z_YOL_ADI için
+# ekleniyor -- diğer katmanlarda (kullanıcı şikayet etmedi) risk almamak
+# için ACI 250 aynen kalıyor. layer_table_record() bu 4. elemanı (varsa)
+# 420 olarak yazıyor; NEW_LAYERS'ın diğer tüm satırları hâlâ 2 elemanlı.
 NEW_LAYERS = [
     ('Z_YAPI_RUHSTLI_PL', '32'),
     ('Z_YAPI_RUHSTSIZ_PL', '132'),
-    ('Z_YOL_ADI', '250'),
+    ('Z_YOL_ADI', '250', 0),
     ('Z_KAPI_NO', '250'),
     ('ADAKENARI', '18'),
     ('T_CADDE_SOKAK', '18'),

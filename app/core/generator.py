@@ -16,7 +16,7 @@ module takes an already street-filtered list of candidates and just needs to:
 """
 import collections
 
-from .config import TEMPLATES, PARKE_LAYER, BORDUR_LAYER, LAYER_TO_KEY, ITEM_PREFIX, NEW_LAYERS, PREFIX_LABELS
+from .config import TEMPLATES, PARKE_LAYER, BORDUR_LAYER, LAYER_TO_KEY, ITEM_PREFIX, NEW_LAYERS
 from .dxf_io import (
     load_dxf_pairs, find_entities_section_span,
     split_entities_raw, evget, fmt, pairs_to_bytes, HandleCounter,
@@ -25,6 +25,7 @@ from .dxf_entities import lwpolyline_entity, line_entity, text_entity, rehome_ba
 from .geometry import polygon_hatch_lines, clip_polygon
 from .survey import totals_from_candidates, merge_bordur_chains
 from .background import extract_background
+from .text_metrics import estimate_text_width
 
 
 class AtasmanInput:
@@ -40,6 +41,19 @@ class AtasmanInput:
         self.imalat_bitis_tarihi = imalat_bitis_tarihi
         self.aykome_no = aykome_no
         self.background_dxf_path = background_dxf_path
+
+
+def _aabb_overlap_area(a, b):
+    """İki eksene-hizalı kutunun ((xmin,xmax,ymin,ymax) çiftleri) çakışma
+    alanını döner -- 0.0 ise hiç çakışmıyorlar demektir. Faz 1.26'nın
+    çakışma-önleyici etiket yerleşimi (bkz. generate_atasman içindeki
+    per-piece döngü) bunu hem "boş mu?" testi (alan==0) hem de hiçbir aday
+    tamamen boş çıkmazsa "en az kötü" seçimi için kullanıyor."""
+    ax0, ax1, ay0, ay1 = a
+    bx0, bx1, by0, by1 = b
+    ox = max(0.0, min(ax1, bx1) - max(ax0, bx0))
+    oy = max(0.0, min(ay1, by1) - max(ay0, by0))
+    return ox * oy
 
 
 def _compute_placement(piece_labels, bordur_lines, work_area_local, scale):
@@ -119,15 +133,23 @@ def generate_atasman(inp: AtasmanInput):
             break
         k += 1
 
-    def layer_table_record(name, color, handle):
-        return [(0, 'LAYER'), (5, handle), (330, '2'), (100, 'AcDbSymbolTableRecord'),
-                (100, 'AcDbLayerTableRecord'), (2, name), (70, '0'), (62, color),
-                (6, 'Continuous'), (370, '0'), (390, 'F'), (1001, 'AcAecLayerStandard'),
+    def layer_table_record(name, color, handle, true_color=None):
+        rec = [(0, 'LAYER'), (5, handle), (330, '2'), (100, 'AcDbSymbolTableRecord'),
+               (100, 'AcDbLayerTableRecord'), (2, name), (70, '0'), (62, color)]
+        if true_color is not None:
+            # Faz 1.26: bkz. config.py::NEW_LAYERS'ın üstündeki yorum -- ACI
+            # (62) tek başına gerçek siyah içermiyor, true color (420) bunu
+            # aşan modern bir katman özelliği (AutoCAD DXF R2004+).
+            rec.append((420, str(true_color)))
+        rec += [(6, 'Continuous'), (370, '0'), (390, 'F'), (1001, 'AcAecLayerStandard'),
                 (1000, ''), (1000, 'AL=0;')]
+        return rec
 
     new_layer_pairs = []
-    for hi, (name, color) in enumerate(NEW_LAYERS):
-        new_layer_pairs.extend(layer_table_record(name, color, f"D{hi + 1:02d}"))
+    for hi, layer_spec in enumerate(NEW_LAYERS):
+        name, color = layer_spec[0], layer_spec[1]
+        true_color = layer_spec[2] if len(layer_spec) > 2 else None
+        new_layer_pairs.extend(layer_table_record(name, color, f"D{hi + 1:02d}", true_color))
     pairs = pairs[:endtab_idx] + new_layer_pairs + pairs[endtab_idx:]
 
     ent_start, ent_end = find_entities_section_span(pairs)
@@ -201,11 +223,23 @@ def generate_atasman(inp: AtasmanInput):
     # başına yetmedi. Bir kez daha yarıya indirildi (TAG_H artık ilk
     # halinin dörtte biri) VE GAP orantısız şekilde daha da küçültüldü ki
     # etiket parçanın hemen dibine yapışsın (komşu parçaya doğru daha az
-    # "sızsın") -- kalabalık/sık parçalı işlerde etiketlerin birbirine
-    # karışma riski büyük ölçüde azalır (hiçbir sabit boyut, keyfi derecede
-    # sık serpiştirilmiş parçalarda çakışmayı tamamen garanti dışı bırakamaz
-    # -- bu, gerçek bir çakışma-önleyici yerleşim algoritması gerektirir,
-    # burada istenen değil).
+    # "sızsın").
+    #
+    # Faz 1.26: per the user, gerçek bir başka üretimde (yoğun/sık parçalı
+    # bir sokak) etiketler yine birbirine (ve komşu parça numaralarına)
+    # karışıyordu -- "bu yazıların boşluklara taşınması lazım" dedi. Faz
+    # 1.24'ün yorumu bunun için "gerçek bir çakışma-önleyici yerleşim
+    # algoritması gerekir" diyordu -- artık tam olarak bu var (aşağıdaki
+    # per-piece döngünün sonu): her etiket bloğu önce varsayılan konumunda
+    # (parçanın ALTINDA) denenir; boşsa (hiçbir başka parçanın kutusuyla ya
+    # da daha önce yerleştirilmiş başka bir etiketle çakışmıyorsa) orada
+    # kalır -- yoksa sırayla ÜSTTE / SAĞDA / SOLDA, sonra (hâlâ hiçbiri boş
+    # değilse) artan mesafelerde yeniden denenir. Hiçbir aday tamamen boş
+    # çıkmazsa en az çakışan seçilir (bir etiket asla sessizce atlanmaz).
+    # Harici bir kütüphane yok -- sadece eksene-hizalı kutu (AABB) çakışma
+    # testi (bkz. _aabb_overlap_area) + cadde/sokak metninde olduğu gibi
+    # ölçülmüş karakter genişlik oranlarıyla (bkz. text_metrics.py) her
+    # etiket bloğunun kapladığı alanın tahmini.
     TAG_H = 0.22
     LINE_SPACING = 0.33
     GAP = 0.30
@@ -225,15 +259,34 @@ def generate_atasman(inp: AtasmanInput):
     # AYRI bir Aykome No girilebiliyor (bkz. main.py::generate -- her
     # parçanın kendi 'aykome_no'su, boşsa taslak formundaki genel Aykome
     # No'ya, o da boşsa "KBF"ye düşer).
-    BORDUR_TAG_LABEL = {'T4': 'Yeni Bordür', 'T5': 'Eski Bordür', 'T8': 'Oluk Taşı'}
-    # Faz 1.20: per the user, m² satırı bordür/oluk satırları gibi HANGİ
-    # malzemeye ait olduğunu söylemiyordu (çıplak "7.01 m²") -- "meğer yeni
-    # parkeninse yeni parke [katmanının] yazısı olacak" dedi, yani bordür
-    # etiketlerindeki gibi ("Yeni Bordür: X mt") parke için de malzeme adı
-    # (Yeni Parke/Eski Parke/Küp Parke -- PREFIX_LABELS ile aynı isimlendirme,
-    # sonuç ekranındaki "Malzeme kalemi kodları" tablosuyla tutarlı) eklendi.
-    PARKE_TAG_LABEL = {k: PREFIX_LABELS.get(ITEM_PREFIX.get(k, k), k) for k in PARKE_LAYER}
-    for key, a, (cx, cy), ymin, verts, piece_bordur, piece_aykome_no, minha_area in piece_labels:
+    # Faz 1.26: per the user -- "yeni parke eski parke yazamana gerek yok
+    # ... eski parke katmanında 7.15 m2 yazman yeterli": malzeme alanı
+    # satırı zaten kendi malzemesinin katmanında/renginde çiziliyor (bir
+    # önceki Faz 1.24 değişikliği) -- rengin/katmanın kendisi hangi malzeme
+    # olduğunu zaten söylüyor, "Yeni Parke:"/"Eski Parke:" öneki (Faz 1.20'de
+    # eklenmişti) artık fazlalık.
+    #
+    # Kullanıcı bir sonraki mesajda ("hala eski bordür yazıyor ama") AYNI
+    # sadeleştirmeyi bordür satırları için de istedi -- "Yeni Bordür:"/
+    # "Eski Bordür:"/"Oluk Taşı:" öneki de kaldırıldı, BORDUR_TAG_LABEL artık
+    # kullanılmıyor (kendi BORDUR_LAYER[bkey] rengi zaten hangi malzeme
+    # olduğunu söylüyor -- parke satırıyla birebir aynı mantık).
+
+    # Etiket bloklarının birbirine ve parçalara çakışmasını önlemek için,
+    # HER parçanın (kendi poligonunun) sınırlayıcı kutusu önceden hesaplanıyor
+    # -- bir etiketin "boşluğa" sığıp sığmadığını, henüz sırası gelmemiş
+    # parçalar dahil TÜM parçalara göre kontrol edebilmek için (aksi halde
+    # sondaki bir parça, ondan önce yerleştirilmiş bir etiketin üstüne
+    # oturabilirdi, ama tam tersi kontrol edilmezdi).
+    piece_bboxes = []
+    for _key, _a, (_cx, _cy), _ymin, _verts, _pb, _pan, _ma in piece_labels:
+        pxs = [v[0] for v in _verts]
+        pys = [v[1] for v in _verts]
+        piece_bboxes.append((min(pxs), max(pxs), min(pys), max(pys)))
+
+    placed_blocks = []  # yerleştirilen her etiketin AABB'si (bkz. yukarı)
+
+    for pi, (key, a, (cx, cy), ymin, verts, piece_bordur, piece_aykome_no, minha_area) in enumerate(piece_labels):
         layer = PARKE_LAYER[key]
         new_entities.append(lwpolyline_entity(layer, verts, handles))
         for p1, p2 in polygon_hatch_lines(verts, angle_deg=135.0, spacing=0.4):
@@ -249,42 +302,71 @@ def generate_atasman(inp: AtasmanInput):
         for bkey in grouped:
             next_item_code(bkey)
 
-        # Yerleşim: parçanın hemen ALTINA (ymin'in GAP kadar aşağısına).
-        # TAG_H/LINE_SPACING/GAP "template-local" birimler gibi (tıpkı
-        # cadde_text_height_local gibi) -- gerçek dünya boyutuna geçerken
-        # `scale` ile çarpılıyor ki 1/1000 şablonda da 1/250'dekiyle aynı
-        # kağıt-üstü boyutta kalsın.
-        #
-        # Faz 1.24: per the user (gerçek bir üretimden, "Eski Parke: 4.37 m²"
-        # örneği) -- her satır ARTIK KENDİ malzemesinin katmanında/renginde:
-        # "AYKOME NO" başlığı ve Aykome No değeri nötr kalıyor (Z_PARCA_ETIKET,
-        # sabit okunur renk), ama malzeme alanı satırı o parçanın kendi
-        # PARKE_LAYER[key] rengiyle (parçanın kendisiyle/taramasıyla aynı --
-        # tıpkı klişedeki T6/T7 lejantının kendi renginde olması gibi), her
-        # bordür satırı kendi BORDUR_LAYER[bkey] rengiyle, ve varsa bir Minha
-        # satırı da T_MİNHA rengiyle çiziliyor. Eskiden hepsi TEK bir nötr
-        # renkteydi, malzemeyi renkten ayırt etmek imkansızdı.
-        #
-        # Aynı kullanıcı ayrıca, bu parçanın (4.37 m²'lik "Eski Parke")
-        # içinde bir Minha VE bir bordür olduğunu, ikisinin de etikette
-        # görünmesi gerektiğini belirtti. Bordür satırı zaten piece_bordur
-        # doluysa otomatik ekleniyordu (aşağıdaki döngü); eksik olan tek şey
-        # Minha satırıydı -- minha_area artık survey.py'den buraya kadar
-        # taşınıyor (bkz. totals_from_candidates), aşağıda ekleniyor.
+        # Faz 1.24: her satır KENDİ malzemesinin katmanında/renginde: "AYKOME
+        # NO" başlığı ve Aykome No değeri nötr (Z_PARCA_ETIKET, sabit okunur
+        # renk), malzeme alanı satırı o parçanın kendi PARKE_LAYER[key]
+        # rengiyle (parçanın kendisiyle/taramasıyla aynı), her bordür satırı
+        # kendi BORDUR_LAYER[bkey] rengiyle, varsa bir Minha satırı da
+        # T_MİNHA rengiyle. Aynı kullanıcı, bir parçanın içinde hem Minha hem
+        # bordür varsa ikisinin de etikette görünmesi gerektiğini belirtti.
         tag_lines = [
             ('%%UAYKOME NO', 'Z_PARCA_ETIKET'),
             (piece_aykome_no or inp.aykome_no or 'KBF', 'Z_PARCA_ETIKET'),
-            (f"{PARKE_TAG_LABEL.get(key, key)}: {a:.2f} m²", layer),
+            (f"{a:.2f} m²", layer),
         ]
         for bkey, g in grouped.items():
-            tag_lines.append((f"{BORDUR_TAG_LABEL.get(bkey, bkey)}: {g['d']:.2f} mt", BORDUR_LAYER[bkey]))
+            tag_lines.append((f"{g['d']:.2f} mt", BORDUR_LAYER[bkey]))
         if minha_area:
             tag_lines.append((f"Minha: {minha_area:.2f} m²", 'T_MİNHA'))
+
         tag_h = TAG_H * scale
-        tag_y0 = ymin - GAP * scale
+        n_lines = len(tag_lines)
+        # Blok yüksekliği: ilk satırın üstünden (tag_h kadar yukarı, kapital
+        # harf yüksekliği) son satırın taban çizgisine kadar.
+        block_h = (n_lines - 1) * LINE_SPACING * scale + tag_h
+        max_line_w = max(estimate_text_width(txt, tag_h) for txt, _ in tag_lines)
+        pxmin, pxmax, pymin, pymax = piece_bboxes[pi]
+        # Küçük bir görsel/güvenlik payı -- tam sıfır mesafeyle "değiyor" gibi
+        # görünmesin diye (hem etiket-etiket hem etiket-parça çakışma
+        # testinde kullanılıyor).
+        pad = 0.25 * tag_h
+
+        def _block_aabb(anchor_x, top_y):
+            # top_y: bloğun İLK satırının taban çizgisi (tag_y0) -- metin sola
+            # hizalı (text_entity hiçbir justification kodu yazmıyor), yani
+            # blok anchor_x'ten SAĞA doğru genişliyor.
+            return (anchor_x - pad, anchor_x + max_line_w + pad,
+                    top_y - block_h - pad, top_y + tag_h + pad)
+
+        candidates = []
+        for mult in (1, 2, 4):
+            g_ = GAP * scale * mult
+            candidates.append((cx, pymin - g_))                                    # ALT (varsayılan)
+            candidates.append((cx, pymax + g_ + block_h))                          # ÜST
+            candidates.append((pxmax + g_, cy + block_h / 2))                       # SAĞ
+            candidates.append((pxmin - g_ - max_line_w, cy + block_h / 2))          # SOL
+
+        best_tag_y0, best_anchor_x, best_overlap = None, None, None
+        for anchor_x, tag_y0 in candidates:
+            box = _block_aabb(anchor_x, tag_y0)
+            total_overlap = 0.0
+            for oj, obox in enumerate(piece_bboxes):
+                if oj == pi:
+                    continue
+                total_overlap += _aabb_overlap_area(box, obox)
+            for obox in placed_blocks:
+                total_overlap += _aabb_overlap_area(box, obox)
+            if total_overlap <= 0.0:
+                best_tag_y0, best_anchor_x, best_overlap = tag_y0, anchor_x, 0.0
+                break
+            if best_overlap is None or total_overlap < best_overlap:
+                best_tag_y0, best_anchor_x, best_overlap = tag_y0, anchor_x, total_overlap
+
+        tag_y0 = best_tag_y0
+        placed_blocks.append(_block_aabb(best_anchor_x, tag_y0))
         for li, (tag_val, tag_layer) in enumerate(tag_lines):
             ty_ = tag_y0 - li * LINE_SPACING * scale
-            new_entities.append(text_entity(tag_layer, (cx, ty_), tag_h, tag_val, handles))
+            new_entities.append(text_entity(tag_layer, (best_anchor_x, ty_), tag_h, tag_val, handles))
 
     # bordür/oluk taşı, ölçülen parke kenarına DEĞİL, ona paralel + taşın
     # kendi genişliği kadar (12cm/30cm) dışa kaydırılmış konumuna çizilir --
