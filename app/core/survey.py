@@ -752,8 +752,14 @@ def totals_from_candidates(candidates):
         if c['parke_key']:
             TOT[c['parke_key']] += round(c['area'], 2)
             TOT_NET[c['parke_key']] += round(c['area'], 2)
+            # Faz 1.24: per the user -- bir parçanın içinde minha varsa, o
+            # parçanın etiketinde ("AYKOME NO / KBF / Eski Parke: X m²")
+            # bordür satırı gibi ayrı bir "Minha: Y m²" satırı da görünmeli
+            # (eskiden minha alanı sadece TOT/TOT_NET toplamlarına
+            # karışıyordu, tek tek hiçbir parçanın etiketinde görünmüyordu).
             piece_labels.append((c['parke_key'], c['area'], (c['cx'], c['cy']), c['ymin'],
-                                  c['verts'], c['piece_bordur'], c.get('aykome_no')))
+                                  c['verts'], c['piece_bordur'], c.get('aykome_no'),
+                                  c.get('minha_area', 0.0)))
         minha_area = c.get('minha_area', 0.0)
         if minha_area:
             TOT['Minha'] += round(minha_area, 2)

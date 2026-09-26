@@ -11,6 +11,17 @@
   </div>
   {% endif %}
 
+  {% if gruplar %}
+  <form method="post" action="{{ url_for('dosyalarim_indir_secili') }}" id="toplu-indir-form">
+  <div class="toplu-indir-bar">
+    <label class="toplu-indir-tumu">
+      <input type="checkbox" id="tumunu-sec">
+      Tümünü seç
+    </label>
+    <button type="submit" class="btn" id="secili-indir-btn" disabled>Seçilenleri indir (0)</button>
+    <span class="hint" style="margin:0">Birden fazla seçerseniz hepsi tek bir zip dosyasında iner.</span>
+  </div>
+
   {% for grup in gruplar %}
   <div class="panel">
     <details {% if loop.first %}open{% endif %}>
@@ -21,10 +32,16 @@
       <div class="table-scroll" style="margin-top:14px">
         <table>
           <tr>
+            <th style="width:28px"></th>
             <th>Hakediş No/Ataşman No</th><th>Mahalle</th><th>Cadde/Sokak</th><th>Ölçen</th><th>Tarih</th><th></th>
           </tr>
           {% for r in grup.records %}
           <tr>
+            <td>
+              {% if r.dosya_yolu %}
+              <input type="checkbox" class="atasman-sec" name="record_ids" value="{{ r.id }}">
+              {% endif %}
+            </td>
             <td>{{ r.hakedis_no }}/{{ r.sira_no }}</td>
             <td>{{ r.mahalle }}</td>
             <td>{{ r.cadde_sokak }}</td>
@@ -44,4 +61,38 @@
     </details>
   </div>
   {% endfor %}
+  </form>
+  {% endif %}
+
+  <style>
+    .toplu-indir-bar {
+      display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+      margin-bottom: 14px; padding: 10px 14px; border-radius: 8px;
+      background: var(--panel, #f4f4f6); border: 1px solid rgba(0,0,0,.08);
+      position: sticky; top: 8px; z-index: 5;
+    }
+    .toplu-indir-tumu { display: flex; align-items: center; gap: 6px; cursor: pointer; white-space: nowrap; }
+  </style>
+  <script>
+    (function () {
+      var form = document.getElementById('toplu-indir-form');
+      if (!form) return;
+      var checkboxes = Array.prototype.slice.call(form.querySelectorAll('.atasman-sec'));
+      var btn = document.getElementById('secili-indir-btn');
+      var tumunu = document.getElementById('tumunu-sec');
+
+      function guncelle() {
+        var secili = checkboxes.filter(function (c) { return c.checked; }).length;
+        btn.textContent = 'Seçilenleri indir (' + secili + ')';
+        btn.disabled = secili === 0;
+        tumunu.checked = secili > 0 && secili === checkboxes.length;
+      }
+      checkboxes.forEach(function (c) { c.addEventListener('change', guncelle); });
+      tumunu.addEventListener('change', function () {
+        checkboxes.forEach(function (c) { c.checked = tumunu.checked; });
+        guncelle();
+      });
+      guncelle();
+    })();
+  </script>
 {% endblock %}

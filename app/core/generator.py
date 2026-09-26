@@ -46,7 +46,7 @@ def _compute_placement(piece_labels, bordur_lines, work_area_local, scale):
     """Center the new piece cluster's real-world bounding box on the
     template's work-area rectangle; returns (TX, TY)."""
     xs, ys = [], []
-    for _, _, _, _, verts, _, _ in piece_labels:
+    for _, _, _, _, verts, _, _, _ in piece_labels:
         for x, y in verts:
             xs.append(x)
             ys.append(y)
@@ -193,10 +193,22 @@ def generate_atasman(inp: AtasmanInput):
     # birçok küçük/sık parçanın olduğu bir iş) "AYKOME NOLAR ÇOK BÜYÜK OLMUŞ
     # BÖYLE OLMAZ" dedi -- etiketler komşu parçalarınkiyle üst üste binip
     # okunaksız bir karalamaya dönüşüyordu. TAG_H (ve orantılı olarak
-    # LINE_SPACING/GAP) yarıya indirildi; hâlâ büyükse tekrar küçültülebilir.
-    TAG_H = 0.45
-    LINE_SPACING = 0.68
-    GAP = 0.8
+    # LINE_SPACING/GAP) yarıya indirildi.
+    #
+    # Faz 1.24: per the user, gerçek bir başka üretimde (Kroki 11/4, yine
+    # Emirgazi) HÂLÂ "gereğinden çok büyük" dedi ve açıkça "küçült, parçaya
+    # yakın küçük bir bölgeye koy" -- Faz 1.20'nin yarıya indirmesi tek
+    # başına yetmedi. Bir kez daha yarıya indirildi (TAG_H artık ilk
+    # halinin dörtte biri) VE GAP orantısız şekilde daha da küçültüldü ki
+    # etiket parçanın hemen dibine yapışsın (komşu parçaya doğru daha az
+    # "sızsın") -- kalabalık/sık parçalı işlerde etiketlerin birbirine
+    # karışma riski büyük ölçüde azalır (hiçbir sabit boyut, keyfi derecede
+    # sık serpiştirilmiş parçalarda çakışmayı tamamen garanti dışı bırakamaz
+    # -- bu, gerçek bir çakışma-önleyici yerleşim algoritması gerektirir,
+    # burada istenen değil).
+    TAG_H = 0.22
+    LINE_SPACING = 0.33
+    GAP = 0.30
     item_counters = collections.defaultdict(int)
 
     def next_item_code(key):
@@ -221,7 +233,7 @@ def generate_atasman(inp: AtasmanInput):
     # (Yeni Parke/Eski Parke/Küp Parke -- PREFIX_LABELS ile aynı isimlendirme,
     # sonuç ekranındaki "Malzeme kalemi kodları" tablosuyla tutarlı) eklendi.
     PARKE_TAG_LABEL = {k: PREFIX_LABELS.get(ITEM_PREFIX.get(k, k), k) for k in PARKE_LAYER}
-    for key, a, (cx, cy), ymin, verts, piece_bordur, piece_aykome_no in piece_labels:
+    for key, a, (cx, cy), ymin, verts, piece_bordur, piece_aykome_no, minha_area in piece_labels:
         layer = PARKE_LAYER[key]
         new_entities.append(lwpolyline_entity(layer, verts, handles))
         for p1, p2 in polygon_hatch_lines(verts, angle_deg=135.0, spacing=0.4):
@@ -237,25 +249,42 @@ def generate_atasman(inp: AtasmanInput):
         for bkey in grouped:
             next_item_code(bkey)
 
-        # Yerleşim: parçanın hemen ALTINA (ymin'in GAP kadar aşağısına),
-        # kendi katmanında (Z_PARCA_ETIKET, sabit okunur renk -- parçanın
-        # malzeme rengine/tarama çizgilerine karışmasın diye). TAG_H/
-        # LINE_SPACING/GAP "template-local" birimler gibi (tıpkı
+        # Yerleşim: parçanın hemen ALTINA (ymin'in GAP kadar aşağısına).
+        # TAG_H/LINE_SPACING/GAP "template-local" birimler gibi (tıpkı
         # cadde_text_height_local gibi) -- gerçek dünya boyutuna geçerken
         # `scale` ile çarpılıyor ki 1/1000 şablonda da 1/250'dekiyle aynı
         # kağıt-üstü boyutta kalsın.
+        #
+        # Faz 1.24: per the user (gerçek bir üretimden, "Eski Parke: 4.37 m²"
+        # örneği) -- her satır ARTIK KENDİ malzemesinin katmanında/renginde:
+        # "AYKOME NO" başlığı ve Aykome No değeri nötr kalıyor (Z_PARCA_ETIKET,
+        # sabit okunur renk), ama malzeme alanı satırı o parçanın kendi
+        # PARKE_LAYER[key] rengiyle (parçanın kendisiyle/taramasıyla aynı --
+        # tıpkı klişedeki T6/T7 lejantının kendi renginde olması gibi), her
+        # bordür satırı kendi BORDUR_LAYER[bkey] rengiyle, ve varsa bir Minha
+        # satırı da T_MİNHA rengiyle çiziliyor. Eskiden hepsi TEK bir nötr
+        # renkteydi, malzemeyi renkten ayırt etmek imkansızdı.
+        #
+        # Aynı kullanıcı ayrıca, bu parçanın (4.37 m²'lik "Eski Parke")
+        # içinde bir Minha VE bir bordür olduğunu, ikisinin de etikette
+        # görünmesi gerektiğini belirtti. Bordür satırı zaten piece_bordur
+        # doluysa otomatik ekleniyordu (aşağıdaki döngü); eksik olan tek şey
+        # Minha satırıydı -- minha_area artık survey.py'den buraya kadar
+        # taşınıyor (bkz. totals_from_candidates), aşağıda ekleniyor.
         tag_lines = [
-            '%%UAYKOME NO',
-            piece_aykome_no or inp.aykome_no or 'KBF',
-            f"{PARKE_TAG_LABEL.get(key, key)}: {a:.2f} m²",
+            ('%%UAYKOME NO', 'Z_PARCA_ETIKET'),
+            (piece_aykome_no or inp.aykome_no or 'KBF', 'Z_PARCA_ETIKET'),
+            (f"{PARKE_TAG_LABEL.get(key, key)}: {a:.2f} m²", layer),
         ]
         for bkey, g in grouped.items():
-            tag_lines.append(f"{BORDUR_TAG_LABEL.get(bkey, bkey)}: {g['d']:.2f} mt")
+            tag_lines.append((f"{BORDUR_TAG_LABEL.get(bkey, bkey)}: {g['d']:.2f} mt", BORDUR_LAYER[bkey]))
+        if minha_area:
+            tag_lines.append((f"Minha: {minha_area:.2f} m²", 'T_MİNHA'))
         tag_h = TAG_H * scale
         tag_y0 = ymin - GAP * scale
-        for li, tag_val in enumerate(tag_lines):
+        for li, (tag_val, tag_layer) in enumerate(tag_lines):
             ty_ = tag_y0 - li * LINE_SPACING * scale
-            new_entities.append(text_entity('Z_PARCA_ETIKET', (cx, ty_), tag_h, tag_val, handles))
+            new_entities.append(text_entity(tag_layer, (cx, ty_), tag_h, tag_val, handles))
 
     # bordür/oluk taşı, ölçülen parke kenarına DEĞİL, ona paralel + taşın
     # kendi genişliği kadar (12cm/30cm) dışa kaydırılmış konumuna çizilir --
@@ -281,16 +310,29 @@ def generate_atasman(inp: AtasmanInput):
 
     # Faz 1.13: uzun cadde/sokak isimleri (ör. "ŞEHİT MUZAFFER ULUTAŞ SOKAK",
     # 27 karakter) sabit yükseklikte hücrenin sağ sınırını (cadde_max_x_local)
-    # aşıp yan hücreye taşıyordu ("kutuda kayıyor" şikayeti) -- DXF'te gerçek
-    # font metriği yok, karakter genişliği kaba/güvenli tarafta 0.65*yükseklik
-    # olarak tahmin ediliyor; isim bu tahminle hücreye sığmıyorsa yazı, TAM
-    # sığacak kadar (ve SADECE o kadar) küçültülüyor -- kısa isimler normal
+    # aşıp yan hücreye taşıyordu ("kutuda kayıyor" şikayeti) -- isim, hücreye
+    # TAM sığacak kadar (ve SADECE o kadar) küçültülüyor; kısa isimler normal
     # (tam) boyutunda kalıyor.
+    #
+    # Faz 1.24: per the user -- gerçek bir üretimden AYNI "ŞEHİT MUZAFFER
+    # ULUTAŞ SOKAK" örneğiyle "hâlâ kutunun dışında" dedi. Kök sebep: bu
+    # şablonun metin stili (bkz. sablon_250.dxf'in STYLE tablosu) "times.ttf"
+    # -- yani Times New Roman -- ve BÜYÜK HARF Times New Roman karakterleri,
+    # eski 0.65*yükseklik tahmininden ÇOK daha geniş. Tahmin değil, gerçek
+    # ölçüm: Times New Roman'la metrik olarak uyumlu Liberation Serif
+    # fontuyla (PIL ImageFont) birkaç gerçek sokak adı ölçüldü -- büyük harf
+    # genişlik/yükseklik oranı 0.92-1.04 arasında çıktı (ör. "ŞEHİT MUZAFFER
+    # ULUTAŞ SOKAK" -> 0.92, "BABADOSTU" -> 1.04), 0.65 tahmininin gerçek
+    # değerin sadece ~%70'i kadar olduğunu (fazlasıyla iyimser/dar olduğunu)
+    # doğruladı -- bu yüzden küçültme neredeyse hiç devreye girmiyordu
+    # (bu örnek için sadece ~%96'ya iniyordu, gerçekte ~%68'e inmesi
+    # gerekiyordu). CADDE_CHAR_W_RATIO artık 1.0 -- ölçülen en geniş
+    # durumun (1.04) bile üzerinde, güvenli bir yuvarlak değer.
     ccx, ccy = T(*tpl['cadde_local'])
     cadde_val = inp.cadde_sokak.upper()
     cadde_h_full = tpl['cadde_text_height_local'] * scale
     cadde_available_w = (tpl['cadde_max_x_local'] - tpl['cadde_local'][0]) * scale
-    CADDE_CHAR_W_RATIO = 0.65
+    CADDE_CHAR_W_RATIO = 1.0
     needed_w = CADDE_CHAR_W_RATIO * cadde_h_full * max(len(cadde_val), 1)
     if needed_w > cadde_available_w > 0:
         cadde_h = cadde_available_w / (CADDE_CHAR_W_RATIO * max(len(cadde_val), 1))

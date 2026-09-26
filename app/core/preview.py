@@ -239,6 +239,16 @@ def render_dxf_preview_svg(dxf_bytes, width=1000, height=700, pad=20):
             body.append(f'<{tag} points="{svg_pts}" fill="none" stroke="{color}" stroke-width="1" />')
         else:
             sx, sy = to_svg(*p['pos'])
+            # Faz 1.25: per the user -- gönderdiğim bir önizleme ekran
+            # görüntüsünde cadde/sokak yazısı "hâlâ kayık" görünüyordu.
+            # Gerçek DXF'te o TEXT entity'sinin dönüşü (code 50) tam 0.0
+            # çıktı (doğrudan pairs'ten doğrulandı) -- yani asıl dosya
+            # düzgün. Kök sebep bu önizleyicideydi: <text> hiç font-family
+            # belirtmiyordu (tarayıcının rastgele varsayılan fontuna
+            # düşüyordu) ve çok küçük punto + agresif yakınlaştırma bir
+            # araya gelince harfler eğik/bozuk görünüyordu. Artık şablonun
+            # gerçek fontuyla (Times New Roman, yoksa metrik olarak aynı
+            # Liberation Serif) çiziliyor -- daha doğru VE daha az yanıltıcı.
             font_px = max(p['h'] * scale, 4.5)
             color = _LAYER_COLORS.get(p['layer'], _DEFAULT_TEXT_COLOR)
             rot = -p['rot']  # y ekseni SVG'de çevrildiği için dönüş yönü de ters
@@ -246,6 +256,7 @@ def render_dxf_preview_svg(dxf_bytes, width=1000, height=700, pad=20):
             deco = ' text-decoration="underline"' if p['underline'] else ''
             body.append(
                 f'<text x="{sx:.1f}" y="{sy:.1f}" font-size="{font_px:.1f}" '
+                f'font-family="Times New Roman, Liberation Serif, serif" '
                 f'fill="{color}"{deco}{transform}>{_xml_escape(p["text"])}</text>'
             )
 

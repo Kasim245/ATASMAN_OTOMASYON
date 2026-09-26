@@ -7,12 +7,13 @@ kapalı olduğu için FastAPI kurulamadı, ama Flask + Jinja2 + python-multipart
 zaten hazır kurulu geliyordu -- işlevsel olarak fark yok, ikisi de aynı işi
 görüyor. Gerçek sunucuya (Render) taşınırken bu hiçbir şeyi değiştirmez.
 """
-import base64
+import io
 import os
 import secrets
 import shutil
 import tempfile
 import uuid
+import zipfile
 from datetime import datetime
 
 from flask import Flask, render_template, request, send_file, redirect, url_for, flash, session, g
@@ -861,13 +862,26 @@ def generate():
         preview_svg = render_dxf_preview_svg(result['dxf_bytes'])
         # yan yana küçük parçalarda etiketler küçük sekmede sıkışıp
         # üst üste binebiliyor (SVG vektör olduğu için pikselleşmeden
-        # büyütülebiliyor) -- data: URI ile yeni sekmede tam boyda/serbestçe
-        # yakınlaştırılabilir açma imkanı da veriyoruz.
-        preview_svg_data_uri = 'data:image/svg+xml;base64,' + base64.b64encode(
-            preview_svg.encode('utf-8')).decode('ascii')
+        # büyütülebiliyor) -- "yeni sekmede büyüt" için tam boyda açma imkanı
+        # da veriyoruz.
+        #
+        # Faz 1.23: per the user -- "tıklayınca yeni sekme açtı ama açılmadı
+        # görsel" -- eskiden bu link doğrudan bir data:image/svg+xml;base64,...
+        # URI'siydi. Chrome/Chromium, güvenlik amacıyla, bir <a target="_blank">
+        # tıklamasından açılan YENİ bir sekmenin doğrudan bir data: URL'ine
+        # üst-seviye (top-level) navigasyonunu sessizce engelliyor -- sekme
+        # açılıyor ama içi hiç yüklenmiyor (playwright ile de doğrulandı: yeni
+        # sekme olayı hiç tetiklenmiyor). Bunun yerine SVG, bu session'ın
+        # tempdir'ine gerçek bir dosya olarak yazılıp aşağıdaki
+        # /onizleme route'undan normal (data: değil) bir URL ile sunuluyor --
+        # aynı-origin bir GET isteği olduğu için bu engele takılmıyor.
+        preview_svg_name = os.path.splitext(out_name)[0] + '.preview.svg'
+        with open(os.path.join(sdir, preview_svg_name), 'w', encoding='utf-8') as f:
+            f.write(preview_svg)
+        preview_svg_url = url_for('onizleme_goster', session_id=session_id, dosya=preview_svg_name)
     except Exception:
         preview_svg = None
-        preview_svg_data_uri = None
+        preview_svg_url = None
 
     # Faz 1.6: aynı DXF'in KALICI bir kopyası da ATASMAN_CIKTI_DIR altına
     # yazılıyor -- yukarıdaki out_path (session tempdir'i) sunucu yeniden
@@ -973,7 +987,7 @@ def generate():
                             hakedis_no=inp.hakedis_no, sira_no=inp.sira_no,
                             totals=result['totals'], minha_count=result.get('minha_count', 0),
                             kalan_kume_var=kalan_kume_var, preview_svg=preview_svg,
-                            preview_svg_data_uri=preview_svg_data_uri)
+                            preview_svg_url=preview_svg_url)
 
 
 @app.get('/indir')
@@ -987,6 +1001,25 @@ def indir_dosya():
         flash('Dosya bulunamadı, ataşmanı tekrar üretin.')
         return redirect(url_for('index'))
     return send_file(path, as_attachment=True, download_name=dosya)
+
+
+@app.get('/onizleme')
+@auth.login_required
+def onizleme_goster():
+    """Faz 1.23: Ön Gösterim'deki "yeni sekmede büyüt" linkinin hedefi --
+    bkz. generate()'deki ilgili yorum: SVG'yi doğrudan bir data: URI olarak
+    açmak yerine (Chrome bunu top-level navigasyonda sessizce engelliyor),
+    burada normal bir dosya gibi (as_attachment=False, doğru content-type ile)
+    sunuluyor ki yeni sekme tarayıcının kendi SVG görüntüleyicisiyle gerçekten
+    açılsın."""
+    session_id = request.args.get('session_id', '')
+    dosya = os.path.basename(request.args.get('dosya', ''))
+    sdir = _session_dir(session_id)
+    path = os.path.join(sdir, dosya)
+    if not dosya or not dosya.endswith('.svg') or not os.path.isfile(path):
+        flash('Önizleme bulunamadı, ataşmanı tekrar üretin.')
+        return redirect(url_for('index'))
+    return send_file(path, as_attachment=False, mimetype='image/svg+xml')
 
 
 @app.get('/dosyalarim')
@@ -1037,6 +1070,64 @@ def dosyalarim_indir(record_id):
         flash('Dosya kalıcı arşivde bulunamadı (silinmiş olabilir).')
         return redirect(url_for('dosyalarim'))
     return send_file(full_path, as_attachment=True, download_name=os.path.basename(rec['dosya_yolu']))
+
+
+@app.post('/dosyalarim/indir-secili')
+@auth.login_required
+def dosyalarim_indir_secili():
+    """Faz 1.22: "Dosyalarım" ekranından birden fazla ataşman seçip TEK
+    seferde indirme -- per the user, tek tek indirmek yerine 10 tanesini
+    seçip toplu indirebilmeli. Tek dosya seçilirse doğrudan o dosya iner
+    (dosyalarim_indir ile aynı davranış); birden fazla seçilirse hepsi
+    bellekte bir zip'e paketlenip TEK dosya olarak indirilir -- diske geçici
+    dosya yazmaya gerek yok, io.BytesIO ile RAM'de oluşturuluyor.
+
+    Erişim kontrolü dosyalarim_indir ile birebir aynı: sadece g.current_is'e
+    ait kayıtlar indirilebilir, başka işe ait ya da bulunamayan/dosyası
+    saklanmamış id'ler sessizce atlanır (formdaki checkbox'lar zaten sadece
+    dosyalarim.html'in kendi gösterdiği -- yani zaten yetkili olunan --
+    kayıtlar için render ediliyor, ama form verisi yine de client'tan geldiği
+    için burada tekrar doğrulanıyor)."""
+    record_ids = request.form.getlist('record_ids', type=int)
+    if not record_ids:
+        flash('İndirmek için en az bir ataşman seçin.')
+        return redirect(url_for('dosyalarim'))
+
+    kayitlar = []
+    for rid in record_ids:
+        rec = get_atasman_by_id(rid)
+        if not rec or (g.current_is and rec['is_id'] != g.current_is['id']):
+            continue
+        if not rec.get('dosya_yolu'):
+            continue
+        full_path = os.path.join(ATASMAN_CIKTI_DIR, rec['dosya_yolu'])
+        if not os.path.isfile(full_path):
+            continue
+        kayitlar.append((rec, full_path))
+
+    if not kayitlar:
+        flash('Seçilen dosyalar bulunamadı ya da erişim yetkiniz yok.')
+        return redirect(url_for('dosyalarim'))
+
+    if len(kayitlar) == 1:
+        rec, full_path = kayitlar[0]
+        return send_file(full_path, as_attachment=True, download_name=os.path.basename(rec['dosya_yolu']))
+
+    buf = io.BytesIO()
+    used_names = set()
+    with zipfile.ZipFile(buf, 'w', zipfile.ZIP_DEFLATED) as zf:
+        for rec, full_path in kayitlar:
+            name = os.path.basename(rec['dosya_yolu'])
+            base, ext = os.path.splitext(name)
+            candidate, n = name, 1
+            while candidate in used_names:  # farklı hakedişlerden aynı adlı dosya gelme ihtimaline karşı
+                candidate = f"{base}_{n}{ext}"
+                n += 1
+            used_names.add(candidate)
+            zf.write(full_path, arcname=candidate)
+    buf.seek(0)
+    zip_adi = f"atasmanlar_{datetime.now().strftime('%Y%m%d_%H%M')}.zip"
+    return send_file(buf, as_attachment=True, download_name=zip_adi, mimetype='application/zip')
 
 
 @app.get('/icmal')
