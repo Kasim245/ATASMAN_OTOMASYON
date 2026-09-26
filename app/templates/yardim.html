@@ -117,6 +117,20 @@
   </div>
 
   <div class="panel">
+    <h3 style="margin-top:0">Ortak nokta kod tablosu</h3>
+    <p class="hint">Sahada noktaları ölçerken kullandığınız kodlar ve bunların hangi ataşman
+      kalemine karşılık geldiği.</p>
+    <div class="table-scroll">
+    <table>
+      <tr><th>Kod</th><th>Açıklama</th><th>Ataşman kalemi</th></tr>
+      {% for row in point_codes %}
+      <tr><td><code>{{ row.kod }}</code></td><td>{{ row.aciklama }}</td><td>{{ row.kalem }}</td></tr>
+      {% endfor %}
+    </table>
+    </div>
+  </div>
+
+  <div class="panel">
     <h3 style="margin-top:0">Hâlâ yardıma mı ihtiyacınız var?</h3>
     <p class="meta" style="margin:0 0 4px">Yetkili: Kasım ERDAL &middot; Tel: 0531 379 96 55</p>
     <p class="meta" style="margin:0">E-posta: info@nordgismuhendislik.com</p>

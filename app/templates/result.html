@@ -18,6 +18,19 @@
       istediğiniz zaman <a href="{{ url_for('dosyalarim') }}">İndirilecek Dosyalar</a> sayfasından
       tekrar indirebilirsiniz.</p>
 
+    {% if preview_svg %}
+    <details open style="margin-top:18px; border-top:1px solid #e5e2da; padding-top:14px">
+      <summary style="cursor:pointer; font-weight:600">Ön Gösterim</summary>
+      <p class="hint" style="margin:8px 0">Çizimin kabaca nasıl göründüğü -- gerçek AutoCAD/NetCAD
+        çıktısının yerini tutmaz (yazı tipi/kalınlık farklı görünebilir), sadece indirmeden önce
+        parçaların/etiketlerin doğru yerde olduğunu hızlıca kontrol etmek için.
+        {% if preview_svg_data_uri %}Parçalar sık/küçükse etiketler burada üst üste binebilir --
+        <a href="{{ preview_svg_data_uri }}" target="_blank" rel="noopener">yeni sekmede büyütüp
+        yakınlaştırarak</a> bakabilirsiniz.{% endif %}</p>
+      <div style="max-width:820px">{{ preview_svg|safe }}</div>
+    </details>
+    {% endif %}
+
     {% if item_codes %}
     <h3>Malzeme kalemi kodları</h3>
     <p class="hint">Mahallenin kendi sürekli sayacından atandı (bir önceki ataşmanlardan devam ediyor).

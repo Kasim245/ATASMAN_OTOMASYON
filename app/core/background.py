@@ -13,14 +13,47 @@ INTEREST_LAYERS = {
 }
 
 
+def _text_footprint(cur_pairs):
+    """Kaba (yaklaşık) genişlik/yükseklik -- yazı tipi metriği DXF'te yok,
+    genişlik karakter başına 0.6*yükseklik olarak (çoğu tek satır CAD fontu
+    için makul, standart bir kural) tahmin ediliyor. Amaç piksel-hassas bir
+    kutu değil, "bu yazı kutuya rahat sığar mı" sorusuna kaba ama güvenli bir
+    cevap vermek (bkz. extract_background docstring'indeki Faz 1.12 notu)."""
+    h = 0.0
+    val = ''
+    for c2, v in cur_pairs:
+        if c2 == '40':
+            try:
+                h = float(v)
+            except ValueError:
+                pass
+        elif c2 == '1':
+            val = v
+    w = 0.6 * h * max(len(val), 1)
+    return w, h
+
+
 def extract_background(path, xmin, xmax, ymin, ymax, interest_layers=None):
     """Scan `path` (a district-wide DXF) and return a list of raw entities
     (each a list of (code, value) pairs) from `interest_layers` that fall
-    inside [xmin,xmax] x [ymin,ymax]. TEXT is kept if its insertion point is
-    inside the box; LINE is clipped to the box (Liang-Barsky); POLYLINE is
-    kept whole (with its raw VERTEX/SEQEND pairs) if any vertex falls inside
-    the box -- callers are expected to clip it further (Sutherland-Hodgman)
-    once they've converted it to a plain vertex list.
+    inside [xmin,xmax] x [ymin,ymax]. TEXT is kept only if it fits ENTIRELY
+    inside the box (insertion point + a safety margin on every side, sized to
+    its own estimated width/height -- see _text_footprint); LINE is clipped
+    to the box (Liang-Barsky); POLYLINE is kept whole (with its raw
+    VERTEX/SEQEND pairs) if any vertex falls inside the box -- callers are
+    expected to clip it further (Sutherland-Hodgman) once they've converted
+    it to a plain vertex list.
+
+    Faz 1.12: TEXT used to be kept whenever its raw insertion point (10,20)
+    was inside the box, with no regard for the glyphs' own extent. A sokak
+    adı/kapı no label whose anchor sits close to the work-area edge would
+    then print HALF outside the frame -- exactly the user's screenshot
+    ("aşağıda ... sokak ismi dışarda kalmış"). We don't know the real DXF's
+    text justification (normal insertion-point semantics vary -- some
+    exports anchor bottom-left, some top-left, etc.), so rather than guess
+    which direction a given label extends, a label is now required to fit
+    with margin on ALL four sides before it's kept; one that's genuinely
+    too close to the edge is dropped cleanly instead of showing cut in half.
     """
     interest_layers = interest_layers or INTEREST_LAYERS
 
@@ -92,7 +125,10 @@ def extract_background(path, xmin, xmax, ymin, ymax, interest_layers=None):
                     ys = [v for c2, v in cur_pairs if c2 == '20']
                     if cur_layer in interest_layers and xs and ys:
                         try:
-                            if in_bbox(float(xs[0]), float(ys[0])):
+                            x0, y0 = float(xs[0]), float(ys[0])
+                            w, h = _text_footprint(cur_pairs)
+                            if (xmin + w <= x0 <= xmax - w
+                                    and ymin + h <= y0 <= ymax - h):
                                 kept_entities.append(list(cur_pairs))
                         except ValueError:
                             pass

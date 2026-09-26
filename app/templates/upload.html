@@ -46,15 +46,4 @@
   </div>
   {% endif %}
 
-  <div class="panel">
-    <h3 style="margin-top:0">Ortak nokta kod tablosu</h3>
-    <div class="table-scroll">
-    <table>
-      <tr><th>Kod</th><th>Açıklama</th><th>Ataşman kalemi</th></tr>
-      {% for row in point_codes %}
-      <tr><td><code>{{ row.kod }}</code></td><td>{{ row.aciklama }}</td><td>{{ row.kalem }}</td></tr>
-      {% endfor %}
-    </table>
-    </div>
-  </div>
 {% endblock %}

@@ -7,6 +7,7 @@ kapalı olduğu için FastAPI kurulamadı, ama Flask + Jinja2 + python-multipart
 zaten hazır kurulu geliyordu -- işlevsel olarak fark yok, ikisi de aynı işi
 görüyor. Gerçek sunucuya (Render) taşınırken bu hiçbir şeyi değiştirmez.
 """
+import base64
 import os
 import secrets
 import shutil
@@ -20,14 +21,15 @@ from .core.survey import (
     parse_survey_candidates, describe_clusters, classify_unclassified_piece,
     build_reconstruction_suggestions, CLUSTER_RADIUS_M, describe_one_group,
 )
-from .core.preview import render_run_preview_svg
+from .core.preview import render_run_preview_svg, render_dxf_preview_svg
 from .core.generator import AtasmanInput, generate_atasman
 from .core.config import (
     TEMPLATES, POINT_CODE_TABLE, MAHALLE_BOUNDARIES_PATH, PREFIX_LABELS, MANUAL_PIECE_CHOICES,
     ATASMAN_CIKTI_DIR,
 )
 from .core.db import (
-    init_db, save_atasman, list_hakedis_numbers, get_records, get_atasman_by_id, next_sira_no,
+    init_db, save_atasman, list_hakedis_numbers, get_records, get_atasman_by_id,
+    get_atasman_by_sira, next_sira_no,
     get_unit_prices, set_unit_prices, delete_record, T_KEYS,
     allocate_item_codes, count_users, create_user, get_user_by_username,
     get_user_by_id, get_user_by_email, update_user_info, set_user_password,
@@ -354,7 +356,12 @@ def hakkinda():
 @app.get('/yardim')
 @auth.login_required
 def yardim():
-    return render_template('yardim.html')
+    # Faz 1.18: "Ortak nokta kod tablosu" (sahada kodla ölçülen noktaların
+    # T1-T8/bordür/oluk kod karşılıkları) per the user'ın isteğiyle, her
+    # dosya yüklemede görünen Ataşman Üret ekranından kaldırılıp buraya,
+    # ayrı/kendi sayfasına taşındı -- referans niteliğinde bir tablo, her
+    # seferinde üretim ekranını kalabalıklaştırmasın diye.
+    return render_template('yardim.html', point_codes=POINT_CODE_TABLE)
 
 
 def _sifre_baglantisi_gonder(kullanici, konu, govde_onsoz, gecerlilik_saat):
@@ -525,7 +532,7 @@ def index():
     # yüzden burada artık @auth.login_required yok, kontrol elle yapılıyor.
     if not session.get('user_id'):
         return render_template('landing.html')
-    return render_template('upload.html', templates=TEMPLATES, point_codes=POINT_CODE_TABLE,
+    return render_template('upload.html', templates=TEMPLATES,
                             current_hakedis_no=session.get('current_hakedis_no', ''))
 
 
@@ -775,6 +782,14 @@ def generate():
         choice_key, choice_kind = choice.split(':', 1)
         classify_unclassified_piece(cand, choice_key, choice_kind)
 
+    # Faz 1.13: parça başına AYRI Aykome No -- kullanıcı "her parçanın aykome
+    # numrası farklı" dedi, tek bir (taslak geneli) alan yetmiyor. Boş
+    # bırakılan parçalar generator.py'de taslağın genel aykome_no'suna, o da
+    # boşsa literal "KBF"ye düşüyor (bkz. generator.py::generate_atasman).
+    for idx, cand in enumerate(group['candidates']):
+        if cand.get('parke_key'):
+            cand['aykome_no'] = request.form.get(f'aykome_piece_{idx}', '').strip() or None
+
     template_scale = request.form.get('template_scale') or group.get('suggested_scale')
     if template_scale not in TEMPLATES:
         flash("Bu taslak, en kaba şablonumuz olan 1/1000 ölçeğine bile sığmıyor "
@@ -801,6 +816,26 @@ def generate():
         background_dxf_path=sess['bg_path'],
     )
 
+    # Faz 1.19: per the user -- "Mehmet ve ben aynı işte aynı anda ataşman
+    # yaparsak ne olur" -- iki kişi aynı hakedişte çalışırken "Sıra No" kutusu
+    # sadece bir ÖNERİ, kimseye rezerve edilmiyor. Biri kaydettikten sonra
+    # diğeri hâlâ eski öneriyle üretirse, DXF üretmeye (yavaş, gereksiz bir
+    # işlem) başlamadan ÖNCE burada yakalayıp kullanıcıyı güncel bir sıra no
+    # girmeye yönlendiriyoruz -- sessizce başkasının kaydının üzerine
+    # yazılmasını (gerçek testle doğrulanmış, önceden var olan bir risk)
+    # engelliyor. Bu sadece hızlı/dostane ön kontrol -- asıl, atomik güvence
+    # save_atasman()'daki DB seviyeli "WHERE kullanici_id IS excluded.kullanici_id"
+    # koşulu (bkz. onun docstring'i): iki istek tam aynı anda gelse bile
+    # birbirini ezemezler.
+    mevcut = get_atasman_by_sira(sess.get('is_id'), inp.hakedis_no, inp.sira_no)
+    if mevcut and mevcut.get('kullanici_id') != session.get('user_id'):
+        kim = mevcut.get('olcen_ad_soyad') or 'başka bir kullanıcı'
+        onerilen = next_sira_no(sess.get('is_id'), inp.hakedis_no)
+        flash(f"\"{inp.hakedis_no}/{inp.sira_no}\" sıra no'sunu az önce {kim} kullandı -- "
+              f"bu formu doldururken aranızda çakışma oldu. Lütfen sıra no'yu güncel öneriyle "
+              f"({onerilen}) değiştirip tekrar üretin; bu ataşman henüz üretilmedi.")
+        return _render_groups(session_id, sess, sess['groups'])
+
     try:
         result = generate_atasman(inp)
     except Exception as exc:
@@ -816,39 +851,96 @@ def generate():
     with open(out_path, 'wb') as f:
         f.write(result['dxf_bytes'])
 
+    # Faz 1.17: per the user, "ataşmanı ürettik ya ön gösterim yapabilir
+    # miyiz... net bir şekilde" -- indirmeden/AutoCAD-NetCAD açmadan önce
+    # dosyanın doğru göründüğünü hızlıca görebilsin diye üretilen DXF'in tam
+    # SVG önizlemesi. Bir render hatası indirme akışını bozmasın diye
+    # yutuluyor -- sadece önizleme sekmesi boş kalır, dosyanın kendisi zaten
+    # yukarıda sağlam şekilde yazıldı.
+    try:
+        preview_svg = render_dxf_preview_svg(result['dxf_bytes'])
+        # yan yana küçük parçalarda etiketler küçük sekmede sıkışıp
+        # üst üste binebiliyor (SVG vektör olduğu için pikselleşmeden
+        # büyütülebiliyor) -- data: URI ile yeni sekmede tam boyda/serbestçe
+        # yakınlaştırılabilir açma imkanı da veriyoruz.
+        preview_svg_data_uri = 'data:image/svg+xml;base64,' + base64.b64encode(
+            preview_svg.encode('utf-8')).decode('ascii')
+    except Exception:
+        preview_svg = None
+        preview_svg_data_uri = None
+
     # Faz 1.6: aynı DXF'in KALICI bir kopyası da ATASMAN_CIKTI_DIR altına
     # yazılıyor -- yukarıdaki out_path (session tempdir'i) sunucu yeniden
     # başlayınca/deploy'da silinir, bu yüzden "İndirilecek Dosyalar" sayfası
-    # (bkz. dosyalarim()) bu kalıcı kopyadan okuyor. Yazma başarısız olursa
-    # (disk dolu vb.) DXF'in az önceki hemen-indir linkini bozmasın diye
-    # yutuluyor, sadece dosya_yolu boş kalır -- o kayıt "İndirilecek
-    # Dosyalar"da "dosya kalıcı olarak saklanamadı" şeklinde görünür.
-    dosya_yolu = None
-    try:
-        rel_yol = _atasman_kalici_yol(sess.get('is_id'), inp.hakedis_no, out_name)
-        kalici_path = os.path.join(ATASMAN_CIKTI_DIR, rel_yol)
-        os.makedirs(os.path.dirname(kalici_path), exist_ok=True)
-        with open(kalici_path, 'wb') as f:
-            f.write(result['dxf_bytes'])
-        dosya_yolu = rel_yol
-    except Exception as exc:
-        flash(f"DXF üretildi, ama kalıcı arşive kaydedilemedi: {exc}")
+    # (bkz. dosyalarim()) bu kalıcı kopyadan okuyor.
+    #
+    # Faz 1.19: per the user -- işlem sırası BİLEREK değişti. Eskiden önce
+    # diske yazılıp SONRA veritabanına kaydediliyordu; bu, yukarıdaki erken
+    # kontrolü (get_atasman_by_sira) atlatan son derece nadir bir eşzamanlı
+    # çakışmada, dosya adı aynıysa (aynı sıra no + mahalle) BAŞKASININ gerçek
+    # DXF dosyasının diskte sessizce üzerine yazılabilmesi anlamına geliyordu.
+    # Artık ÖNCE veritabanına (save_atasman'ın atomik "WHERE kullanici_id IS
+    # excluded.kullanici_id" koruması ile, bkz. onun docstring'i) yazılıyor;
+    # diske SADECE bu veritabanı yazımı gerçekten BİZE ait olarak başarılı
+    # olduysa dokunuluyor -- böylece iki güvence de (veritabanı satırı VE
+    # diskteki dosya) aynı atomik kontrole bağlanmış oluyor, biri diğerini
+    # atlayıp yalnız kalamaz.
+    rel_yol = _atasman_kalici_yol(sess.get('is_id'), inp.hakedis_no, out_name)
 
-    # Ataşmanın verilerini İcmal için kalıcı kaydet -- DXF indirmeyi
-    # engellemesin diye kayıt hatası sessizce yutuluyor, sadece kullanıcıya
-    # bilgi veriliyor.
+    kaydedildi = True
     try:
         # İcmal, parke kalemlerini minha alanı düşülmüş (NET) haliyle alır --
         # ataşman DXF'inin kendi başlık bloğu ise GROSS (result['totals']) ile
         # doldu, ayrıca ayrı bir Minha toplamı gösteriyor.
         nokta_sayisi = sum(len(c.get('verts') or []) for c in inp.candidates)
-        save_atasman(inp.hakedis_no, inp.sira_no, inp.mahalle, inp.cadde_sokak,
-                     inp.aykome_no, result['totals_net'],
-                     kapi_no=request.form.get('kapi_no', '').strip(),
-                     kullanici_id=session.get('user_id'), is_id=sess.get('is_id'),
-                     nokta_sayisi=nokta_sayisi, dosya_yolu=dosya_yolu)
+        kaydedildi = save_atasman(inp.hakedis_no, inp.sira_no, inp.mahalle, inp.cadde_sokak,
+                                   inp.aykome_no, result['totals_net'],
+                                   kapi_no=request.form.get('kapi_no', '').strip(),
+                                   kullanici_id=session.get('user_id'), is_id=sess.get('is_id'),
+                                   nokta_sayisi=nokta_sayisi, dosya_yolu=rel_yol)
+        if not kaydedildi:
+            # Yukarıdaki erken kontrole rağmen -- son derece nadir ama
+            # teorik olarak mümkün -- iki istek TAM aynı anda buraya
+            # ulaştı: save_atasman()'ın DB-seviyeli koruması BAŞKASININ
+            # kaydını (ve az sonra atlanacak olan dosyasını) korumak için
+            # hiçbir şey yazmadı. DXF hâlâ hemen indirilebilir (yukarıdaki
+            # session-içi kopyadan) ama kalıcı arşive/İcmal'e YAZILMADI --
+            # kullanıcı bunu açıkça bilmeli, belirsiz bir mesajla
+            # geçiştirilmemeli.
+            onerilen = next_sira_no(sess.get('is_id'), inp.hakedis_no)
+            flash(f"DXF indirilebilir ama kalıcı arşive/İcmal'e KAYDEDİLMEDİ: "
+                  f"\"{inp.hakedis_no}/{inp.sira_no}\" sıra no'sunu tam bu sırada başka biri "
+                  f"kullandı. Lütfen sıra no'yu {onerilen} olarak değiştirip bu ataşmanı "
+                  f"yeniden üretin.")
     except Exception as exc:
+        kaydedildi = False
         flash(f"DXF üretildi, ama İcmal kaydı tutulamadı: {exc}")
+
+    dosya_yolu = None
+    if kaydedildi:
+        try:
+            kalici_path = os.path.join(ATASMAN_CIKTI_DIR, rel_yol)
+            os.makedirs(os.path.dirname(kalici_path), exist_ok=True)
+            with open(kalici_path, 'wb') as f:
+                f.write(result['dxf_bytes'])
+            dosya_yolu = rel_yol
+        except Exception as exc:
+            flash(f"DXF üretildi ve İcmal'e kaydedildi, ama kalıcı arşive yazılamadı: {exc}")
+            # DB satırı zaten rel_yol'u dosya_yolu olarak yazmıştı (yukarıda,
+            # diske yazmadan ÖNCE) -- diske yazma gerçekten başarısız olduysa
+            # o satır artık VAR OLMAYAN bir dosyaya işaret ediyor demektir;
+            # "İndirilecek Dosyalar"da kırık bir linke düşmesin diye
+            # düzeltiyoruz. Bu ikinci çağrı kesin başarılı olur çünkü kayıt
+            # zaten bu kullanıcıya ait (WHERE kullanici_id IS excluded.kullanici_id
+            # eşleşir, bkz. save_atasman docstring'i).
+            try:
+                save_atasman(inp.hakedis_no, inp.sira_no, inp.mahalle, inp.cadde_sokak,
+                             inp.aykome_no, result['totals_net'],
+                             kapi_no=request.form.get('kapi_no', '').strip(),
+                             kullanici_id=session.get('user_id'), is_id=sess.get('is_id'),
+                             nokta_sayisi=nokta_sayisi, dosya_yolu=None)
+            except Exception:
+                pass
 
     # Faz 1.8: bu kümenin üretildiğini işaretle -- (a) küme ekranına geri
     # dönüldüğünde bu küme "zaten üretildi" rozetiyle gösterilsin, (b) bir
@@ -880,7 +972,8 @@ def generate():
                             mahalle=inp.mahalle, cadde_sokak=inp.cadde_sokak,
                             hakedis_no=inp.hakedis_no, sira_no=inp.sira_no,
                             totals=result['totals'], minha_count=result.get('minha_count', 0),
-                            kalan_kume_var=kalan_kume_var)
+                            kalan_kume_var=kalan_kume_var, preview_svg=preview_svg,
+                            preview_svg_data_uri=preview_svg_data_uri)
 
 
 @app.get('/indir')
@@ -903,14 +996,20 @@ def dosyalarim():
     listeleyen, kalıcı arşivden (ATASMAN_CIKTI_DIR) tekrar indirmeyi
     sağlayan sayfa -- per the user, üretim anında bir kere indirip
     unutulan/kaybolan dosyalar yerine, buradan istediği zaman tekrar
-    erişebiliyor. İcmal ekranındaki aynı yetki kuralı: Personel sadece kendi
-    ürettiklerini, Yönetici işin tüm kayıtlarını görür."""
+    erişebiliyor.
+
+    Faz 1.15: Görünürlük İŞ bazlı, KİŞİ bazlı değil -- per the user (Mehmet
+    ve Emre ikisi de Karatay işinde görevliyse, ikisi de kimin ürettiğine
+    bakmaksızın o işin TÜM ataşmanlarını indirebilmeli). Zaten hangi işleri
+    görebileceği _my_isler()/g.current_is ile (kullanici_isler ataması)
+    sınırlanıyor -- o filtre yeterli, ayrıca kullanici_id'ye göre süzmeye
+    gerek yok. (Önceki sürümlerde personel sadece kendi ürettiğini
+    görüyordu; bu artık kaldırıldı.)"""
     if not g.current_is:
         return render_template('dosyalarim.html', gruplar=[])
-    own_id = None if auth.is_admin() else session['user_id']
     gruplar = []
     for h in list_hakedis_numbers(g.current_is['id']):
-        records = get_records(h, g.current_is['id'], kullanici_id=own_id)
+        records = get_records(h, g.current_is['id'])
         if records:
             gruplar.append({'hakedis_no': h, 'records': records})
     # en yeni hakediş en üstte gösterilsin
@@ -921,10 +1020,11 @@ def dosyalarim():
 @app.get('/dosyalarim/indir/<int:record_id>')
 @auth.login_required
 def dosyalarim_indir(record_id):
+    # Faz 1.15: iş bazlı erişim -- o işe atanan (g.current_is) herkes, kim
+    # ürettiğine bakmaksızın indirebilir; sadece BAŞKA bir işin kaydına
+    # erişim engellenir.
     rec = get_atasman_by_id(record_id)
-    own_id = None if auth.is_admin() else session['user_id']
-    yetkisiz = (not rec or (g.current_is and rec['is_id'] != g.current_is['id'])
-                or (own_id is not None and rec['kullanici_id'] != own_id))
+    yetkisiz = not rec or (g.current_is and rec['is_id'] != g.current_is['id'])
     if yetkisiz:
         flash('Dosya bulunamadı ya da bu dosyaya erişim yetkiniz yok.')
         return redirect(url_for('dosyalarim'))
@@ -943,13 +1043,13 @@ def dosyalarim_indir(record_id):
 @auth.login_required
 def icmal_index():
     # Her iş kendi hakediş/kayıt havuzunu tutar -- üst menüde şu an seçili
-    # olan işin (g.current_is) dışındaki kayıtlar hiç görünmez. Personel
-    # ayrıca sadece kendi ürettiği ataşmanları görür; Yönetici hepsini.
-    own_id = None if auth.is_admin() else session['user_id']
+    # olan işin (g.current_is) dışındaki kayıtlar hiç görünmez. Faz 1.15:
+    # görünürlük artık İŞ bazlı -- o işe atanan herkes (rolü ne olursa
+    # olsun) o işin tüm kayıtlarını görür, kim ürettiği fark etmez.
     hakedis_no = request.args.get('hakedis_no', '').strip()
     current_is = g.current_is
     hakedis_list = list_hakedis_numbers(current_is['id']) if current_is else []
-    records = get_records(hakedis_no, current_is['id'], kullanici_id=own_id) \
+    records = get_records(hakedis_no, current_is['id']) \
         if hakedis_no and current_is else []
     unit_prices = get_unit_prices(current_is['id']) if current_is else {}
     return render_template('icmal.html', hakedis_list=hakedis_list, hakedis_no=hakedis_no,
@@ -987,8 +1087,13 @@ def icmal_sil():
 
 
 @app.get('/icmal/indir')
-@auth.admin_required
+@auth.login_required
 def icmal_indir():
+    # Faz 1.15/1.16: İcmal ekranı iş bazlı görünür (dosyalarim/icmal_index),
+    # ama bu indirme route'u hâlâ @auth.admin_required idi -- personel
+    # (örn. Mehmet) "İcmal İndir"e bastığında paneline geri atılıyordu.
+    # Erişim zaten g.current_is/_my_isler() ile is atamasina göre sınırlı,
+    # ayrıca yönetici şartı gerekmiyor.
     hakedis_no = request.args.get('hakedis_no', '').strip()
     if not hakedis_no:
         flash('Hakediş no seçmelisiniz.')

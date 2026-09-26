@@ -68,6 +68,14 @@ _BASE_TEMPLATE = {
     # local position of the cadde/sokak name cell (same title block, under mahalle)
     'cadde_local': (-6.128022938977493, 35.7),
     'cadde_text_height_local': 0.42,
+    # Faz 1.13: cadde/sokak hücresinin SAĞ sınırı (T_KLİŞE'deki dikey çizgi,
+    # bu hücreyi malzeme özet tablosundan ayırıyor) -- kullanıcının "cadde
+    # sokak ismi uzun olunca kutuda kayıyor" şikayeti üzerine ölçüldü: uzun
+    # bir sokak ismi (ör. 27 karakter) sabit yükseklikte bu sınırı aşıp yan
+    # hücreye taşabiliyordu (marj neredeyse sıfırdı). generator.py artık bu
+    # sınıra göre gerekirse yazı yüksekliğini küçültüyor (kısa isimler
+    # etkilenmiyor, sadece gerçekten sığmayanlar küçülüyor).
+    'cadde_max_x_local': 0.95,
     # blank-template placeholder strings on layer T_KLİŞE, and what each
     # one is replaced by (job data is substituted in at generation time)
     'mahalle_placeholder': '-İSİM- MH.',
@@ -206,4 +214,10 @@ NEW_LAYERS = [
     ('Z_KAPI_NO', '250'),
     ('ADAKENARI', '18'),
     ('T_CADDE_SOKAK', '18'),
+    # Faz 1.12: kullanıcının isteği üzerine -- her parça (parke/küp) çiziminin
+    # altına o parçanın alanını (m²) ve Aykome No'sunu yazan etiket. Kendi
+    # katmanında (parçanın kendi malzeme renginden bağımsız, sabit/görünür
+    # 250) tutuluyor ki hem her zaman okunaklı olsun hem de CAD'de tek
+    # katman kapatılarak (parça malzemeleri kapanmadan) gizlenebilsin.
+    ('Z_PARCA_ETIKET', '250'),
 ]

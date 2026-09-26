@@ -155,8 +155,25 @@
       <label>İmalatın bitiş tarihi (gg/aa/yyyy)</label>
       <input type="text" name="imalat_bitis_tarihi" placeholder="28/07/2026" required>
 
-      <label>Aykome No (opsiyonel)</label>
-      <input type="text" name="aykome_no">
+      <label>Aykome No (opsiyonel -- tüm parçalar için varsayılan)</label>
+      <input type="text" name="aykome_no" placeholder="Boş bırakılırsa parçalarda &quot;KBF&quot; yazılır">
+
+      {% set parke_candidates = group.candidates|selectattr('parke_key')|list %}
+      {% if parke_candidates %}
+      <details style="margin-top:10px">
+        <summary class="hint" style="cursor:pointer">İleri düzey: parça başına farklı Aykome No gir ({{ parke_candidates|length }} parça)</summary>
+        <p class="hint" style="margin:10px 0">Her parçanın Aykome No'su gerçekten farklıysa buradan girin -- boş bırakılan
+          parçalar yukarıdaki genel Aykome No'yu (o da boşsa "KBF") kullanır.</p>
+        {% for candidate in group.candidates %}
+          {% if candidate.parke_key %}
+          <div style="display:flex; gap:10px; align-items:center; margin-top:6px">
+            <span class="hint" style="min-width:120px">~{{ '%.2f'|format(candidate.area) }} m² parça</span>
+            <input type="text" name="aykome_piece_{{ loop.index0 }}" placeholder="KBF" style="max-width:220px">
+          </div>
+          {% endif %}
+        {% endfor %}
+      </details>
+      {% endif %}
 
       <div style="margin-top:16px">
         <button type="submit" {% if not group.suggested_scale %}disabled{% endif %}>Bu taslak için ataşman DXF'i üret</button>

@@ -11,7 +11,8 @@ module takes an already street-filtered list of candidates and just needs to:
     drawing)
   - substitute mahalle/cadde/hakediş-sıra/tarih/aykome into the template's
     placeholder text (these used to be literal strings)
-  - draw the pieces, bordür/oluk lines, and any clipped background content
+  - draw the pieces, bordür/oluk lines, per-piece alan/Aykome No etiketi, and
+    any clipped background content
 """
 import collections
 
@@ -45,7 +46,7 @@ def _compute_placement(piece_labels, bordur_lines, work_area_local, scale):
     """Center the new piece cluster's real-world bounding box on the
     template's work-area rectangle; returns (TX, TY)."""
     xs, ys = [], []
-    for _, _, _, _, verts, _ in piece_labels:
+    for _, _, _, _, verts, _, _ in piece_labels:
         for x, y in verts:
             xs.append(x)
             ys.append(y)
@@ -136,7 +137,11 @@ def generate_atasman(inp: AtasmanInput):
         tpl['mahalle_placeholder']: f"{inp.mahalle.upper()} MH.",
         tpl['atasman_no_placeholder']: f"{inp.hakedis_no}/{inp.sira_no}",
         tpl['tarih_placeholder']: f"İMALATıN BİTİŞ TARİHİ : {inp.imalat_bitis_tarihi}",
-        tpl['aykome_prefix_placeholder']: f"Aykome No: {inp.aykome_no}",
+        # Faz 1.13: boşsa "Aykome No: " diye yarım bırakmak yerine literal
+        # "KBF" yazılıyor -- gerçek referans dosyada ("Aykome No: KBF")
+        # doğrulandı, aynı düşüş parça etiketlerinde de kullanılıyor (bkz.
+        # aşağıdaki piece_labels döngüsü).
+        tpl['aykome_prefix_placeholder']: f"Aykome No: {inp.aykome_no or 'KBF'}",
     }
     text_remove = set(tpl['text_remove_literal']) | {tpl['sokak_placeholder']}
 
@@ -194,7 +199,17 @@ def generate_atasman(inp: AtasmanInput):
         item_counters[prefix] += 1
         return f"{prefix}{item_counters[prefix]}"
 
-    for key, a, (cx, cy), ymin, verts, piece_bordur in piece_labels:
+    # Faz 1.13: gerçek Akabe 4/45 prototipinde (bu genel uygulamanın
+    # modellendiği örnek) her parçanın altına 3 satırlık bir etiket
+    # yazılıyormuş -- kullanıcının onaylayıp gösterdiği referans dosyada
+    # doğrulandı: "%%UAYKOME NO" (altı çizili başlık), altında parçanın kendi
+    # Aykome No'su (yoksa literal "KBF"), altında alanı ("X.XX m²") -- her
+    # satır TAG_H yükseklikte, aralarında LINE_SPACING boşluk. Parça başına
+    # AYRI bir Aykome No girilebiliyor (bkz. main.py::generate -- her
+    # parçanın kendi 'aykome_no'su, boşsa taslak formundaki genel Aykome
+    # No'ya, o da boşsa "KBF"ye düşer).
+    BORDUR_TAG_LABEL = {'T4': 'Yeni Bordür', 'T5': 'Eski Bordür', 'T8': 'Oluk Taşı'}
+    for key, a, (cx, cy), ymin, verts, piece_bordur, piece_aykome_no in piece_labels:
         layer = PARKE_LAYER[key]
         new_entities.append(lwpolyline_entity(layer, verts, handles))
         for p1, p2 in polygon_hatch_lines(verts, angle_deg=135.0, spacing=0.4):
@@ -209,6 +224,26 @@ def generate_atasman(inp: AtasmanInput):
             grouped[bkey]['pts'] += [p1, p2]
         for bkey in grouped:
             next_item_code(bkey)
+
+        # Yerleşim: parçanın hemen ALTINA (ymin'in GAP kadar aşağısına),
+        # kendi katmanında (Z_PARCA_ETIKET, sabit okunur renk -- parçanın
+        # malzeme rengine/tarama çizgilerine karışmasın diye). TAG_H/
+        # LINE_SPACING/GAP "template-local" birimler gibi (tıpkı
+        # cadde_text_height_local gibi) -- gerçek dünya boyutuna geçerken
+        # `scale` ile çarpılıyor ki 1/1000 şablonda da 1/250'dekiyle aynı
+        # kağıt-üstü boyutta kalsın.
+        tag_lines = [
+            '%%UAYKOME NO',
+            piece_aykome_no or inp.aykome_no or 'KBF',
+            f"{a:.2f} m²",
+        ]
+        for bkey, g in grouped.items():
+            tag_lines.append(f"{BORDUR_TAG_LABEL.get(bkey, bkey)}: {g['d']:.2f} mt")
+        tag_h = TAG_H * scale
+        tag_y0 = ymin - GAP * scale
+        for li, tag_val in enumerate(tag_lines):
+            ty_ = tag_y0 - li * LINE_SPACING * scale
+            new_entities.append(text_entity('Z_PARCA_ETIKET', (cx, ty_), tag_h, tag_val, handles))
 
     # bordür/oluk taşı, ölçülen parke kenarına DEĞİL, ona paralel + taşın
     # kendi genişliği kadar (12cm/30cm) dışa kaydırılmış konumuna çizilir --
@@ -232,10 +267,24 @@ def generate_atasman(inp: AtasmanInput):
             new_entities.append(line_entity('T_MİNHA', p1, p2, handles))
         next_item_code('Minha')
 
+    # Faz 1.13: uzun cadde/sokak isimleri (ör. "ŞEHİT MUZAFFER ULUTAŞ SOKAK",
+    # 27 karakter) sabit yükseklikte hücrenin sağ sınırını (cadde_max_x_local)
+    # aşıp yan hücreye taşıyordu ("kutuda kayıyor" şikayeti) -- DXF'te gerçek
+    # font metriği yok, karakter genişliği kaba/güvenli tarafta 0.65*yükseklik
+    # olarak tahmin ediliyor; isim bu tahminle hücreye sığmıyorsa yazı, TAM
+    # sığacak kadar (ve SADECE o kadar) küçültülüyor -- kısa isimler normal
+    # (tam) boyutunda kalıyor.
     ccx, ccy = T(*tpl['cadde_local'])
-    new_entities.append(text_entity('T_CADDE_SOKAK', (ccx, ccy),
-                                     tpl['cadde_text_height_local'] * scale,
-                                     inp.cadde_sokak.upper(), handles))
+    cadde_val = inp.cadde_sokak.upper()
+    cadde_h_full = tpl['cadde_text_height_local'] * scale
+    cadde_available_w = (tpl['cadde_max_x_local'] - tpl['cadde_local'][0]) * scale
+    CADDE_CHAR_W_RATIO = 0.65
+    needed_w = CADDE_CHAR_W_RATIO * cadde_h_full * max(len(cadde_val), 1)
+    if needed_w > cadde_available_w > 0:
+        cadde_h = cadde_available_w / (CADDE_CHAR_W_RATIO * max(len(cadde_val), 1))
+    else:
+        cadde_h = cadde_h_full
+    new_entities.append(text_entity('T_CADDE_SOKAK', (ccx, ccy), cadde_h, cadde_val, handles))
 
     # ---- background (imar planı altlığı) content, clipped to this job's extent ----
     background_entities = []

@@ -303,18 +303,37 @@ def init_db():
 def save_atasman(hakedis_no, sira_no, mahalle, cadde_sokak, aykome_no, totals,
                   kapi_no='', kullanici_id=None, is_id=None, nokta_sayisi=0, dosya_yolu=None):
     """Insert this ataşman's row, or overwrite it if (hakediş no, sıra no)
-    already exists (e.g. the same ataşman was re-generated after a fix).
+    already exists AND belongs to the SAME kullanici_id (e.g. the same kişi
+    aynı ataşmanı bir hatayı düzeltip yeniden üretti).
+
+    Faz 1.19: per the user -- "Mehmet ve ben aynı işte aynı anda ataşman
+    yaparsak ne olur" -- eskiden bu ON CONFLICT koşulsuzdu, yani BAŞKA bir
+    kullanıcının kaydı bile sessizce üzerine yazılabiliyordu (gerçek testle
+    doğrulandı: Mehmet'in 6/11'i, formunda hâlâ eski "11" önerisi olan
+    Kasım'ın üretimiyle sessizce silinip yerine Kasım'ınki geçiyordu). Artık
+    ON CONFLICT ... WHERE atasmanlar.kullanici_id IS excluded.kullanici_id --
+    sadece kaydın GERÇEK sahibi kendi kaydını yeniden üretirse üzerine yazar;
+    başkasının kaydına denk gelirse İSTEK HİÇBİR ŞEYİ DEĞİŞTİRMEZ (0 satır
+    etkilenir) ve hiçbir hata da fırlatmaz -- bu yüzden dönüş değeri (True/
+    False) kontrol edilmeli. Bu, main.py::generate()'deki hızlı/dostane ön
+    kontrolün (get_atasman_by_sira) YAKALAYAMADIĞI gerçek eşzamanlı çakışmalar
+    için son, atomik güvence -- iki istek TAM aynı anda gelse bile veritabanı
+    seviyesinde birbirini ezmeleri imkansız.
+
     nokta_sayisi: bu ataşmanı oluşturan saha noktalarının sayısı -- Panelim
     ekranındaki "kaç nokta ölçtü" istatistiği için (bkz. main.py::generate).
     dosya_yolu: üretilen DXF'in ATASMAN_CIKTI_DIR'e göre (relative) kalıcı
     disk yolu -- "İndirilecek Dosyalar" sayfası bunu okuyup tekrar indirtir
-    (bkz. main.py::dosyalarim, dosyalarim_indir)."""
+    (bkz. main.py::dosyalarim, dosyalarim_indir).
+
+    Döndürür: True (kayıt yeni eklendi ya da kendi kaydı güncellendi) ya da
+    False (bu sıra no BAŞKA birine ait olduğu için hiçbir şey yazılmadı)."""
     conn = _connect()
     values = {k.lower(): float(totals.get(k, 0) or 0) for k in T_KEYS}
     col_names = ', '.join(values.keys())
     placeholders = ', '.join('?' for _ in values)
     update_cols = ', '.join(f'{k}=excluded.{k}' for k in values)
-    conn.execute(f"""
+    cur = conn.execute(f"""
         INSERT INTO atasmanlar (hakedis_no, sira_no, mahalle, cadde_sokak, aykome_no,
                                  kapi_no, kullanici_id, is_id, nokta_sayisi, dosya_yolu,
                                  {col_names}, created_at)
@@ -325,11 +344,14 @@ def save_atasman(hakedis_no, sira_no, mahalle, cadde_sokak, aykome_no, totals,
             kullanici_id=excluded.kullanici_id, is_id=excluded.is_id,
             nokta_sayisi=excluded.nokta_sayisi, dosya_yolu=excluded.dosya_yolu,
             {update_cols}, created_at=excluded.created_at
+        WHERE atasmanlar.kullanici_id IS excluded.kullanici_id
     """, (hakedis_no, sira_no, mahalle, cadde_sokak, aykome_no, kapi_no, kullanici_id, is_id,
           int(nokta_sayisi or 0), dosya_yolu, *values.values(),
           datetime.now().isoformat(timespec='seconds')))
     conn.commit()
+    basarili = cur.rowcount > 0
     conn.close()
+    return basarili
 
 
 def get_atasman_by_id(record_id):
@@ -338,6 +360,22 @@ def get_atasman_by_id(record_id):
     dosyaya erişimi olup olmadığını doğruluyor."""
     conn = _connect()
     row = conn.execute("SELECT * FROM atasmanlar WHERE id = ?", (record_id,)).fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
+def get_atasman_by_sira(is_id, hakedis_no, sira_no):
+    """Faz 1.19: verilen (iş, hakediş, sıra no) üçlüsünde ZATEN bir kayıt var
+    mı -- varsa kim üretmiş (ad_soyad dahil). main.py::generate() üretime
+    başlamadan ÖNCE bunu sorup, sıra no'yu BAŞKA biri az önce almışsa
+    kullanıcıyı uyarıp durdurmak için (aşağıdaki save_atasman()'daki
+    DB-seviyeli korumanın hızlı/dostane ön kontrolü -- bkz. onun docstring'i)."""
+    conn = _connect()
+    row = conn.execute("""
+        SELECT a.*, k.ad_soyad AS olcen_ad_soyad
+        FROM atasmanlar a LEFT JOIN kullanicilar k ON k.id = a.kullanici_id
+        WHERE a.is_id = ? AND a.hakedis_no = ? AND a.sira_no = ?
+    """, (is_id, hakedis_no, sira_no)).fetchone()
     conn.close()
     return dict(row) if row else None
 

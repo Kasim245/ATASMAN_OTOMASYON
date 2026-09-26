@@ -18,10 +18,21 @@ street's sign than to their own street's, even though they're clearly one
 contiguous job -- confirmed by testing per-piece lookup against the real
 file, which fractured the 7-piece group across 4 different street names).
 So the pipeline here clusters by proximity FIRST (single-link / connected
-components on piece centroids), then looks up ONE nearest-street label per
-whole cluster's centroid -- which is exactly the approach already validated
+components on piece centroids), then looks up ONE street label per whole
+cluster's centroid -- which is exactly the approach already validated
 earlier (nearest label ~31m away vs ~75m for the next street, computed on
 the 7-piece group's centroid).
+
+Faz 1.13: even at the CLUSTER level, straight-line nearest-label can still
+pick the wrong street right at a corner/intersection, if a neighbouring
+street's sign happens to sit euclidean-closer than the cluster's own
+street's sign (confirmed by a real user report -- a cluster on Ergener Sokak
+got labeled Hasansevinç Sokak, whose sign was ~44m away vs Ergener's own
+~66m by ROAD, even though Ergener's sign was reachable). See
+streetnet.py + _street_for_centroid(): the ADAKENARI block-edge network is
+used to measure "closest by walking the actual curb", which respects real
+street topology instead of cutting across a block; falls back to plain
+nearest-label where the network doesn't reach nearby (fragmented/no data).
 """
 import collections
 import math
@@ -38,6 +49,16 @@ from .config import (
 )
 from .background import extract_background
 from .mahalle import load_mahalle_boundaries, find_mahalle
+from .streetnet import build_street_network, assign_street_names, nearest_network_street
+
+# Faz 1.13: bir parça kümesinin merkezine, ADAKENARI ağı üzerinden ("hangi
+# ada kenarına bağlıyım") ulaşılan sokak etiketi, o kümenin kendi ada
+# kenarından bu kadar (metre) uzaktaysa güvenilir sayılır -- daha uzaksa
+# ağda o civarda kullanışlı bir veri yok demektir (bkz. streetnet.py'nin
+# "bağlı bileşen" notu: ADAKENARI citywide tek bir ağ değil, genelde blok
+# blok kopuk parçalardan oluşuyor), o zaman düz "en yakın etiket" yöntemine
+# geri dönülür.
+STREET_NETWORK_MAX_GAP_M = 50.0
 
 # Pieces within this many meters of each other (single-link) are assumed to
 # be the same field job. Chosen empirically against the Akabe 4/45 fixture:
@@ -459,6 +480,66 @@ def suggest_scale(bbox, margin=1.0):
 # 1/250, bazıları 1/500, bazıları 1/1000 olsun" davranışı zaten bu adımda var.
 
 
+def _extract_labels_and_network(background_dxf_path, xmin, xmax, ymin, ymax):
+    """Tek bir art alan taramasından hem düz etiket listelerini (street_labels,
+    kapi_no_labels -- eski/yedek yöntem için) hem de ADAKENARI ağını (nodes,
+    node_street -- Faz 1.13'ün ağ-mesafesi tabanlı sokak atamasi için) üretir.
+    describe_clusters() ve describe_one_group() arasında ortak (ikisi de aynı
+    şekilde hesaplasın diye)."""
+    street_labels, kapi_no_labels = [], []
+    nodes, node_street = {}, {}
+    if not background_dxf_path:
+        return street_labels, kapi_no_labels, nodes, node_street
+
+    labels_raw = extract_background(background_dxf_path, xmin, xmax, ymin, ymax,
+                                     interest_layers={'Z_YOL_ADI', 'Z_KAPI_NO', 'ADAKENARI'})
+    edge_segments = []
+    for ent in labels_raw:
+        etype = ent[0][1]
+        layer = [v for c, v in ent if c == '8']
+        if not layer:
+            continue
+        if etype == 'TEXT':
+            val = [v for c, v in ent if c == '1']
+            x = [v for c, v in ent if c == '10']
+            y = [v for c, v in ent if c == '20']
+            if val and x and y:
+                entry = (val[0], float(x[0]), float(y[0]))
+                if layer[0] == 'Z_YOL_ADI':
+                    street_labels.append(entry)
+                elif layer[0] == 'Z_KAPI_NO':
+                    kapi_no_labels.append(entry)
+        elif etype == 'LINE' and layer[0] == 'ADAKENARI':
+            x1 = [v for c, v in ent if c == '10']
+            y1 = [v for c, v in ent if c == '20']
+            x2 = [v for c, v in ent if c == '11']
+            y2 = [v for c, v in ent if c == '21']
+            if x1 and y1 and x2 and y2:
+                edge_segments.append((float(x1[0]), float(y1[0]), float(x2[0]), float(y2[0])))
+
+    if edge_segments and street_labels:
+        nodes, adj, label_entries = build_street_network(edge_segments, street_labels)
+        node_street = assign_street_names(nodes, adj, label_entries)
+    return street_labels, kapi_no_labels, nodes, node_street
+
+
+def _street_for_centroid(cx, cy, street_labels, nodes, node_street):
+    """Faz 1.13: önce ADAKENARI ağı üzerinden (gerçek yol topolojisine saygılı)
+    dene; ağdaki en yakın düğüm makul mesafedeyse (STREET_NETWORK_MAX_GAP_M)
+    onu kullan -- değilse (o civarda kullanışlı ağ verisi yoksa) düz "en yakın
+    etiket" yöntemine geri dön. Bkz. streetnet.py docstring'i: düz yöntem bir
+    köşede öz sokağından ÇOK daha yakın duran KOMŞU bir sokak tabelasına
+    atlayabiliyordu (gerçek kullanıcı örneğiyle doğrulandı) -- ağ mesafesi bu
+    köşeyi "dolaşarak" doğru sokağı buluyor."""
+    if node_street:
+        nk = min(node_street, key=lambda k: (nodes[k][0] - cx) ** 2 + (nodes[k][1] - cy) ** 2)
+        gap = math.hypot(nodes[nk][0] - cx, nodes[nk][1] - cy)
+        if gap <= STREET_NETWORK_MAX_GAP_M:
+            name, net_dist = node_street[nk]
+            return name, net_dist
+    return _nearest_label(cx, cy, street_labels)
+
+
 def _nearest_label(cx, cy, labels):
     if not labels:
         return None, None
@@ -497,39 +578,27 @@ def describe_clusters(candidates, background_dxf_path=None, mahalle_boundaries_p
     clusters = cluster_candidates(candidates, radius=radius if radius is not None else CLUSTER_RADIUS_M)
     mahalle_boundaries = load_mahalle_boundaries(mahalle_boundaries_path) if mahalle_boundaries_path else []
 
-    street_labels = []
-    kapi_no_labels = []
+    street_labels, kapi_no_labels, nodes, node_street = [], [], {}, {}
     if background_dxf_path and clusters:
         all_x = [c['cx'] for cl in clusters for c in cl]
         all_y = [c['cy'] for cl in clusters for c in cl]
         pad = 300.0
-        labels_raw = extract_background(background_dxf_path,
-                                         min(all_x) - pad, max(all_x) + pad,
-                                         min(all_y) - pad, max(all_y) + pad,
-                                         interest_layers={'Z_YOL_ADI', 'Z_KAPI_NO'})
-        for ent in labels_raw:
-            layer = [v for c, v in ent if c == '8']
-            val = [v for c, v in ent if c == '1']
-            x = [v for c, v in ent if c == '10']
-            y = [v for c, v in ent if c == '20']
-            if layer and val and x and y:
-                entry = (val[0], float(x[0]), float(y[0]))
-                if layer[0] == 'Z_YOL_ADI':
-                    street_labels.append(entry)
-                elif layer[0] == 'Z_KAPI_NO':
-                    kapi_no_labels.append(entry)
+        street_labels, kapi_no_labels, nodes, node_street = _extract_labels_and_network(
+            background_dxf_path, min(all_x) - pad, max(all_x) + pad,
+            min(all_y) - pad, max(all_y) + pad)
 
-    out = [_group_dict(cl, street_labels, kapi_no_labels, mahalle_boundaries) for cl in clusters]
+    out = [_group_dict(cl, street_labels, kapi_no_labels, mahalle_boundaries, nodes, node_street)
+           for cl in clusters]
     return sorted(out, key=lambda g: -g['piece_count'])
 
 
-def _group_dict(cl, street_labels, kapi_no_labels, mahalle_boundaries):
+def _group_dict(cl, street_labels, kapi_no_labels, mahalle_boundaries, nodes=None, node_street=None):
     """Bir tek kümenin (candidates listesi) gösterim sözlüğünü üretir --
     describe_clusters()'ın ana döngüsünden ve (Faz 1.3) describe_one_group()'tan
     ortak kullanılıyor, ikisi de aynı alanları aynı şekilde hesaplasın diye."""
     centroid = (sum(c['cx'] for c in cl) / len(cl), sum(c['cy'] for c in cl) / len(cl))
     bbox = _bbox(cl)
-    street, street_dist = _nearest_label(*centroid, street_labels)
+    street, street_dist = _street_for_centroid(*centroid, street_labels, nodes or {}, node_street or {})
     kapi_no, kapi_no_dist = _nearest_label(*centroid, kapi_no_labels)
     mahalle, mahalle_dist = (find_mahalle(*centroid, mahalle_boundaries)
                               if mahalle_boundaries else (None, None))
@@ -564,26 +633,13 @@ def describe_one_group(candidates, background_dxf_path=None, mahalle_boundaries_
     if not candidates:
         return None
     mahalle_boundaries = load_mahalle_boundaries(mahalle_boundaries_path) if mahalle_boundaries_path else []
-    street_labels, kapi_no_labels = [], []
+    street_labels, kapi_no_labels, nodes, node_street = [], [], {}, {}
     if background_dxf_path:
         bbox = _bbox(candidates)
         pad = 300.0
-        labels_raw = extract_background(background_dxf_path,
-                                         bbox[0] - pad, bbox[1] + pad,
-                                         bbox[2] - pad, bbox[3] + pad,
-                                         interest_layers={'Z_YOL_ADI', 'Z_KAPI_NO'})
-        for ent in labels_raw:
-            layer = [v for c, v in ent if c == '8']
-            val = [v for c, v in ent if c == '1']
-            x = [v for c, v in ent if c == '10']
-            y = [v for c, v in ent if c == '20']
-            if layer and val and x and y:
-                entry = (val[0], float(x[0]), float(y[0]))
-                if layer[0] == 'Z_YOL_ADI':
-                    street_labels.append(entry)
-                elif layer[0] == 'Z_KAPI_NO':
-                    kapi_no_labels.append(entry)
-    return _group_dict(candidates, street_labels, kapi_no_labels, mahalle_boundaries)
+        street_labels, kapi_no_labels, nodes, node_street = _extract_labels_and_network(
+            background_dxf_path, bbox[0] - pad, bbox[1] + pad, bbox[2] - pad, bbox[3] + pad)
+    return _group_dict(candidates, street_labels, kapi_no_labels, mahalle_boundaries, nodes, node_street)
 
 
 def merge_bordur_chains(bordur_lines, tol=0.05):
@@ -697,7 +753,7 @@ def totals_from_candidates(candidates):
             TOT[c['parke_key']] += round(c['area'], 2)
             TOT_NET[c['parke_key']] += round(c['area'], 2)
             piece_labels.append((c['parke_key'], c['area'], (c['cx'], c['cy']), c['ymin'],
-                                  c['verts'], c['piece_bordur']))
+                                  c['verts'], c['piece_bordur'], c.get('aykome_no')))
         minha_area = c.get('minha_area', 0.0)
         if minha_area:
             TOT['Minha'] += round(minha_area, 2)
