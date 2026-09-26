@@ -235,7 +235,15 @@ def _standalone_line_candidates(ents_survey, pts, consumed_ids, existing_candida
         # bordürü İKİ KEZ saymak (bir kez bu bağımsız LINE adayından, bir
         # kez de o parçadan) anlamına gelirdi -- miktar tarafına hiç
         # dokunulmuyor, sadece görünüm/etiket tarafına.
-        if nearest is not None and nearest.get('parke_key'):
+        # Faz 1.28: per the user -- "sadece bordür olan yerlerde de aynı
+        # şekilde aykome no ve mt bilgisini yazman lazım, bordür oluk
+        # farketmeksizin": bu bordür yakınındaki GERÇEK bir parçaya
+        # eklendiyse (yukarıdaki 'attached_bordur') o parçanın etiketinde
+        # zaten görünecek -- bu KAYNAK adayı bir de KENDİ başına
+        # etiketlemek (totals_from_candidates'te) aynı bordürü iki ayrı
+        # yerde göstermek olurdu. `attached` işareti bunu ayırt etmek için.
+        attached = nearest is not None and bool(nearest.get('parke_key'))
+        if attached:
             nearest.setdefault('attached_bordur', []).append(bordur_entry)
         out.append({
             'verts': [p1, p2],
@@ -248,6 +256,7 @@ def _standalone_line_candidates(ents_survey, pts, consumed_ids, existing_candida
             'minha_shapes': [],
             'unclassified': False,
             'review_reason': None,
+            'bordur_attached_elsewhere': attached,
         })
     return out
 
@@ -790,6 +799,24 @@ def totals_from_candidates(candidates):
             piece_labels.append((c['parke_key'], c['area'], (c['cx'], c['cy']), c['ymin'],
                                   c['verts'], c['piece_bordur'] + c.get('attached_bordur', []),
                                   c.get('aykome_no'), c.get('minha_area', 0.0)))
+        elif c['piece_bordur'] and not c.get('bordur_attached_elsewhere'):
+            # Faz 1.28: per the user -- "sadece bordür olan yerlerde de aynı
+            # şekilde aykome no ve mt bilgisini yazman lazım, bordür oluk
+            # farketmeksizin". Parke'si olmayan (parke_key=None) ama bordür/
+            # oluk'u olan bir aday -- sahada bağımsız bir LINE olarak ölçülmüş
+            # (bkz. _standalone_line_candidates) YA DA tamamen bordür/oluk
+            # kodlu kapalı bir şekil olup kullanıcının 'uzunluk' seçtiği
+            # (bkz. classify_unclassified_piece) -- eskiden HİÇBİR etikette
+            # görünmüyordu (aşağıdaki `if c['parke_key']:` şartı yüzünden bu
+            # dal hiç çalışmıyordu). Yakınında GERÇEK bir parçaya zaten
+            # eklendiyse ('bordur_attached_elsewhere', bkz. yukarıda) o
+            # parçanın etiketinde zaten görünüyor -- burada TEKRAR
+            # etiketlenmiyor (aynı bordürü iki yerde göstermemek için).
+            # `a=0.0`/`key=None`: generator.py bunu "m²" satırı OLMAYAN,
+            # sadece bordür/oluk satırlı bir etiket olarak çiziyor.
+            piece_labels.append((None, 0.0, (c['cx'], c['cy']), c['ymin'],
+                                  c['verts'], c['piece_bordur'],
+                                  c.get('aykome_no'), 0.0))
         minha_area = c.get('minha_area', 0.0)
         if minha_area:
             TOT['Minha'] += round(minha_area, 2)

@@ -211,6 +211,117 @@ def generate_atasman(inp: AtasmanInput):
     # ---- new entities: parke pieces, bordür/oluk lines, cadde/sokak text ----
     handles = HandleCounter()
     new_entities = []
+
+    # Faz 1.28: per the user -- "içerideki çerçevenin dışına yazılar taşıyorrr"
+    # (genel olarak, sadece cadde/sokak adı değil) -- çakışma-önleyici etiket
+    # yerleşimi (aşağıdaki per-piece döngü) o ana kadar SADECE diğer
+    # parçalarla/etiketlerle çakışmayı kontrol ediyordu, şablonun kendi iç
+    # çerçevesinin (work_area) NEREDE olduğunu hiç bilmiyordu -- parça
+    # kümesinin kenarına yakın bir parçanın etiketi, GAP çarpanı arttıkça
+    # (2x/4x) çerçevenin dışına taşabiliyordu. Şablonun iç çerçevesi (gerçek
+    # dünya koordinatlarında) burada hesaplanıp aşağıdaki döngüde "çerçeve
+    # dışında kalan alan" da bir çakışma gibi cezalandırılıyor (bkz. o
+    # döngüdeki frame_escape_area kullanımı) -- sıfır cezalı bir aday varsa o
+    # seçilir, yoksa yine en az kötü aday (artık hem gerçek çakışma hem
+    # çerçeve-dışı alanı birlikte en aza indiren) seçilir.
+    _fwa = tpl['work_area_local']
+    _fx0, _fy0 = T(_fwa['xmin'], _fwa['ymin'])
+    _fx1, _fy1 = T(_fwa['xmax'], _fwa['ymax'])
+    frame_box = (min(_fx0, _fx1), max(_fx0, _fx1), min(_fy0, _fy1), max(_fy0, _fy1))
+
+    def _frame_escape_area(box):
+        """box'ın frame_box'ın DIŞINDA kalan kısmının (kaba) alanı -- box'ın
+        toplam alanından frame_box'la kesişimini çıkararak. box tamamen
+        içerideyse 0.0."""
+        bx0, bx1, by0, by1 = box
+        box_area = max(0.0, bx1 - bx0) * max(0.0, by1 - by0)
+        inside = _aabb_overlap_area(box, frame_box)
+        return max(0.0, box_area - inside)
+
+    # ---- background (imar planı altlığı) content, clipped to this job's extent ----
+    # Faz 1.28: bu blok eskiden AŞAĞIDA, parça etiketleri (AYKOME NO/alan/mt)
+    # yerleştirildikten SONRA hesaplanıyordu -- bu yüzden çakışma-önleyici
+    # etiket yerleşimi (bkz. aşağıdaki per-piece döngü) arka plandan gelen
+    # Z_YOL_ADI (cadde/sokak) metninin nerede olduğunu HİÇ bilmiyordu, sadece
+    # diğer parçaları ve diğer etiketleri "engel" sayıyordu. Kullanıcının
+    # "aykome no yazısı ile cadde sokak yazısı da çakışıyor" şikayeti tam
+    # olarak bunun sonucu. Çözüm: arka plan içeriği burada, etiket
+    # yerleştirmeden ÖNCE çıkarılıyor; Z_YOL_ADI katmanındaki metinlerin
+    # (rehome sonrası, yani gerçek dünya konum/ölçeğiyle) kaba AABB'leri
+    # aşağıda bg_text_obstacles listesine toplanıp per-piece döngüde diğer
+    # engellerle (piece_bboxes, placed_blocks) birlikte kontrol ediliyor.
+    # Son DXF'teki çizim SIRASI değişmiyor (flat_existing + flat_bg +
+    # flat_new hâlâ aynı sırada birleştiriliyor) -- sadece bu listenin NE
+    # ZAMAN hesaplandığı değişti.
+    background_entities = []
+    bg_text_obstacles = []
+    if inp.background_dxf_path:
+        wa = tpl['work_area_local']
+        bg_xmin, bg_ymin = T(wa['xmin'], wa['ymin'])
+        bg_xmax, bg_ymax = T(wa['xmax'], wa['ymax'])
+        bg_raw = extract_background(inp.background_dxf_path, bg_xmin, bg_xmax, bg_ymin, bg_ymax)
+        # background metni (kapı no, sokak adı) 1/250 şablonda okunur şekilde
+        # kalibre edildi; daha kaba ölçeklerde (1/1000) şablonun kendi metni
+        # nasıl büyüyorsa (bkz. yukarıdaki kod==40 satırı) o kadar büyütülüyor
+        # -- 250'de katsayı 1.0 (davranış değişmiyor), 1000'de 4.0 (bkz.
+        # rehome_background_entity docstring'i, Issue #2).
+        bg_text_scale = scale / TEMPLATES['250']['scale']
+        for ent in bg_raw:
+            etype = ent[0][1]
+            if etype == 'POLYLINE':
+                layer = [v for c2, v in ent if c2 == '8'][0]
+                verts = []
+                cur_vertex = None
+                for c2, v in ent:
+                    if c2 == '0' and v == 'VERTEX':
+                        cur_vertex = {}
+                        continue
+                    if c2 == '0' and v == 'SEQEND':
+                        cur_vertex = None
+                        continue
+                    if cur_vertex is not None:
+                        cur_vertex[c2] = v
+                        if c2 == '20':
+                            verts.append((float(cur_vertex['10']), float(cur_vertex['20'])))
+                clipped = clip_polygon(verts, bg_xmin, bg_xmax, bg_ymin, bg_ymax)
+                if len(clipped) >= 3:
+                    background_entities.append(lwpolyline_entity(layer, clipped, handles))
+                continue
+            rehomed = rehome_background_entity(ent, handles, text_scale=bg_text_scale)
+            background_entities.append(rehomed)
+            if rehomed[0] == (0, 'TEXT'):
+                r_layer = r_val = None
+                r_h = 0.0
+                r_x = r_y = None
+                for code, v in rehomed:
+                    if code == 8:
+                        r_layer = v
+                    elif code == 1:
+                        r_val = v
+                    elif code == 40:
+                        try:
+                            r_h = float(v)
+                        except ValueError:
+                            pass
+                    elif code == 10:
+                        try:
+                            r_x = float(v)
+                        except ValueError:
+                            pass
+                    elif code == 20:
+                        try:
+                            r_y = float(v)
+                        except ValueError:
+                            pass
+                if r_layer == 'Z_YOL_ADI' and r_val and r_x is not None and r_y is not None:
+                    # Metnin gerçek justification'ını (hangi köşeden mi
+                    # hizalı) bilmiyoruz (bkz. background.py::extract_background
+                    # Faz 1.12 notu) -- güvenli tarafta kalmak için kutu,
+                    # ekleme noktasının HER YÖNÜNE tahmini genişlik/yükseklik
+                    # kadar (simetrik) genişletiliyor.
+                    r_w = estimate_text_width(r_val, r_h)
+                    bg_text_obstacles.append((r_x - r_w, r_x + r_w, r_y - r_h, r_y + r_h))
+
     # Faz 1.20: per the user, gerçek bir üretimde (Kroki 11/1, Emirgazi --
     # birçok küçük/sık parçanın olduğu bir iş) "AYKOME NOLAR ÇOK BÜYÜK OLMUŞ
     # BÖYLE OLMAZ" dedi -- etiketler komşu parçalarınkiyle üst üste binip
@@ -287,14 +398,21 @@ def generate_atasman(inp: AtasmanInput):
     placed_blocks = []  # yerleştirilen her etiketin AABB'si (bkz. yukarı)
 
     for pi, (key, a, (cx, cy), ymin, verts, piece_bordur, piece_aykome_no, minha_area) in enumerate(piece_labels):
-        layer = PARKE_LAYER[key]
-        new_entities.append(lwpolyline_entity(layer, verts, handles))
-        for p1, p2 in polygon_hatch_lines(verts, angle_deg=135.0, spacing=0.4):
-            new_entities.append(line_entity(layer, p1, p2, handles))
-        # item code computed for bookkeeping only -- NOT drawn as text (the
-        # user assigns/tracks piece labels manually in NetCAD for now, since
-        # NetCAD's own "Adı" field can't be set via DXF export)
-        next_item_code(key)
+        # Faz 1.28: `key` None olabilir -- parke'si olmayan, SADECE bordür/
+        # oluk'u olan bir "sanal parça" (bkz. survey.py::totals_from_candidates,
+        # yeni `elif c['piece_bordur'] and not ...:` dalı). Böyle bir aday için
+        # çizilecek bir parke poligonu/taraması yok (zaten kendi bordür/oluk
+        # hattı ayrıca -- aşağıdaki merge_bordur_chains döngüsünde -- çizilir),
+        # sadece etiketi var.
+        if key:
+            layer = PARKE_LAYER[key]
+            new_entities.append(lwpolyline_entity(layer, verts, handles))
+            for p1, p2 in polygon_hatch_lines(verts, angle_deg=135.0, spacing=0.4):
+                new_entities.append(line_entity(layer, p1, p2, handles))
+            # item code computed for bookkeeping only -- NOT drawn as text (the
+            # user assigns/tracks piece labels manually in NetCAD for now, since
+            # NetCAD's own "Adı" field can't be set via DXF export)
+            next_item_code(key)
         grouped = collections.defaultdict(lambda: {'d': 0.0, 'pts': []})
         for bkey, p1, p2, d, p1o, p2o in piece_bordur:
             grouped[bkey]['d'] += d
@@ -312,8 +430,9 @@ def generate_atasman(inp: AtasmanInput):
         tag_lines = [
             ('%%UAYKOME NO', 'Z_PARCA_ETIKET'),
             (piece_aykome_no or inp.aykome_no or 'KBF', 'Z_PARCA_ETIKET'),
-            (f"{a:.2f} m²", layer),
         ]
+        if key:
+            tag_lines.append((f"{a:.2f} m²", PARKE_LAYER[key]))
         for bkey, g in grouped.items():
             tag_lines.append((f"{g['d']:.2f} mt", BORDUR_LAYER[bkey]))
         if minha_area:
@@ -356,6 +475,14 @@ def generate_atasman(inp: AtasmanInput):
                 total_overlap += _aabb_overlap_area(box, obox)
             for obox in placed_blocks:
                 total_overlap += _aabb_overlap_area(box, obox)
+            # Faz 1.28: arka plandan gelen cadde/sokak (Z_YOL_ADI) metinleri de
+            # birer engel -- bkz. background_entities'in artık burada yukarıda,
+            # bu döngüden ÖNCE hesaplanmasının nedeni.
+            for obox in bg_text_obstacles:
+                total_overlap += _aabb_overlap_area(box, obox)
+            # Faz 1.28: şablonun iç çerçevesinin dışına taşan kısım da bir
+            # çakışma gibi cezalandırılıyor (bkz. yukarıdaki frame_box notu).
+            total_overlap += _frame_escape_area(box)
             if total_overlap <= 0.0:
                 best_tag_y0, best_anchor_x, best_overlap = tag_y0, anchor_x, 0.0
                 break
@@ -422,42 +549,10 @@ def generate_atasman(inp: AtasmanInput):
         cadde_h = cadde_h_full
     new_entities.append(text_entity('T_CADDE_SOKAK', (ccx, ccy), cadde_h, cadde_val, handles))
 
-    # ---- background (imar planı altlığı) content, clipped to this job's extent ----
-    background_entities = []
-    if inp.background_dxf_path:
-        wa = tpl['work_area_local']
-        bg_xmin, bg_ymin = T(wa['xmin'], wa['ymin'])
-        bg_xmax, bg_ymax = T(wa['xmax'], wa['ymax'])
-        bg_raw = extract_background(inp.background_dxf_path, bg_xmin, bg_xmax, bg_ymin, bg_ymax)
-        # background metni (kapı no, sokak adı) 1/250 şablonda okunur şekilde
-        # kalibre edildi; daha kaba ölçeklerde (1/1000) şablonun kendi metni
-        # nasıl büyüyorsa (bkz. yukarıdaki kod==40 satırı) o kadar büyütülüyor
-        # -- 250'de katsayı 1.0 (davranış değişmiyor), 1000'de 4.0 (bkz.
-        # rehome_background_entity docstring'i, Issue #2).
-        bg_text_scale = scale / TEMPLATES['250']['scale']
-        for ent in bg_raw:
-            etype = ent[0][1]
-            if etype == 'POLYLINE':
-                layer = [v for c2, v in ent if c2 == '8'][0]
-                verts = []
-                cur_vertex = None
-                for c2, v in ent:
-                    if c2 == '0' and v == 'VERTEX':
-                        cur_vertex = {}
-                        continue
-                    if c2 == '0' and v == 'SEQEND':
-                        cur_vertex = None
-                        continue
-                    if cur_vertex is not None:
-                        cur_vertex[c2] = v
-                        if c2 == '20':
-                            verts.append((float(cur_vertex['10']), float(cur_vertex['20'])))
-                clipped = clip_polygon(verts, bg_xmin, bg_xmax, bg_ymin, bg_ymax)
-                if len(clipped) >= 3:
-                    background_entities.append(lwpolyline_entity(layer, clipped, handles))
-                continue
-            background_entities.append(rehome_background_entity(ent, handles, text_scale=bg_text_scale))
-
+    # ---- background (imar planı altlığı) content ----
+    # Faz 1.28: artık YUKARIDA (parça etiketleri yerleştirilmeden önce)
+    # hesaplanıyor -- bkz. o bloğun başındaki not. `background_entities`
+    # burada zaten hazır; final DXF'teki sıra (existing + bg + new) değişmedi.
     flat_existing = [pair for ent in out_entities for pair in ent]
     flat_bg = [pair for ent in background_entities for pair in ent]
     flat_new = [pair for ent in new_entities for pair in ent]
