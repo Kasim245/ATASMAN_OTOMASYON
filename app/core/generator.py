@@ -16,7 +16,7 @@ module takes an already street-filtered list of candidates and just needs to:
 """
 import collections
 
-from .config import TEMPLATES, PARKE_LAYER, BORDUR_LAYER, LAYER_TO_KEY, ITEM_PREFIX, NEW_LAYERS
+from .config import TEMPLATES, PARKE_LAYER, BORDUR_LAYER, LAYER_TO_KEY, ITEM_PREFIX, NEW_LAYERS, PREFIX_LABELS
 from .dxf_io import (
     load_dxf_pairs, find_entities_section_span,
     split_entities_raw, evget, fmt, pairs_to_bytes, HandleCounter,
@@ -189,9 +189,14 @@ def generate_atasman(inp: AtasmanInput):
     # ---- new entities: parke pieces, bordür/oluk lines, cadde/sokak text ----
     handles = HandleCounter()
     new_entities = []
-    TAG_H = 0.9
-    LINE_SPACING = 1.35
-    GAP = 1.6
+    # Faz 1.20: per the user, gerçek bir üretimde (Kroki 11/1, Emirgazi --
+    # birçok küçük/sık parçanın olduğu bir iş) "AYKOME NOLAR ÇOK BÜYÜK OLMUŞ
+    # BÖYLE OLMAZ" dedi -- etiketler komşu parçalarınkiyle üst üste binip
+    # okunaksız bir karalamaya dönüşüyordu. TAG_H (ve orantılı olarak
+    # LINE_SPACING/GAP) yarıya indirildi; hâlâ büyükse tekrar küçültülebilir.
+    TAG_H = 0.45
+    LINE_SPACING = 0.68
+    GAP = 0.8
     item_counters = collections.defaultdict(int)
 
     def next_item_code(key):
@@ -209,6 +214,13 @@ def generate_atasman(inp: AtasmanInput):
     # parçanın kendi 'aykome_no'su, boşsa taslak formundaki genel Aykome
     # No'ya, o da boşsa "KBF"ye düşer).
     BORDUR_TAG_LABEL = {'T4': 'Yeni Bordür', 'T5': 'Eski Bordür', 'T8': 'Oluk Taşı'}
+    # Faz 1.20: per the user, m² satırı bordür/oluk satırları gibi HANGİ
+    # malzemeye ait olduğunu söylemiyordu (çıplak "7.01 m²") -- "meğer yeni
+    # parkeninse yeni parke [katmanının] yazısı olacak" dedi, yani bordür
+    # etiketlerindeki gibi ("Yeni Bordür: X mt") parke için de malzeme adı
+    # (Yeni Parke/Eski Parke/Küp Parke -- PREFIX_LABELS ile aynı isimlendirme,
+    # sonuç ekranındaki "Malzeme kalemi kodları" tablosuyla tutarlı) eklendi.
+    PARKE_TAG_LABEL = {k: PREFIX_LABELS.get(ITEM_PREFIX.get(k, k), k) for k in PARKE_LAYER}
     for key, a, (cx, cy), ymin, verts, piece_bordur, piece_aykome_no in piece_labels:
         layer = PARKE_LAYER[key]
         new_entities.append(lwpolyline_entity(layer, verts, handles))
@@ -235,7 +247,7 @@ def generate_atasman(inp: AtasmanInput):
         tag_lines = [
             '%%UAYKOME NO',
             piece_aykome_no or inp.aykome_no or 'KBF',
-            f"{a:.2f} m²",
+            f"{PARKE_TAG_LABEL.get(key, key)}: {a:.2f} m²",
         ]
         for bkey, g in grouped.items():
             tag_lines.append(f"{BORDUR_TAG_LABEL.get(bkey, bkey)}: {g['d']:.2f} mt")
